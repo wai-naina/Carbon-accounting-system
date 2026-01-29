@@ -1,0 +1,37 @@
+app:
+  name: "Octavia Carbon Accounting System"
+  version: "1.0.0"
+
+database:
+  type: "sqlite"
+  path: "data/octavia.db"
+
+plant:
+  name: "Project Hummingbird Phase 1"
+  location: "Gilgil, Kenya"
+  start_date: "2026-01-01"
+  target_capacity_tonnes_year: 100
+  infrastructure_lifetime_years: 10
+  sorbent_lifetime_years: 3
+
+emission_factors:
+  grid:
+    kenya_power: 0.049
+    geothermal: 0.0
+
+  materials:
+    stainless_steel_304: 7.14
+    mild_steel: 2.40
+    aluminium: 11.75
+    concrete: 0.13
+    alumina: 1.91
+    pei: 11.05
+    methanol: 0.92
+
+  eol:
+    landfill: 0.02
+    combustion: 1.29
+
+  transport:
+    sea_shipping: 0.005
+    road_trucking: 0.086

@@ -1,0 +1,20 @@
+grid:
+  kenya_power: 0.049
+  geothermal: 0.0
+
+materials:
+  stainless_steel_304: 7.14
+  mild_steel: 2.40
+  aluminium: 11.75
+  concrete: 0.13
+  alumina: 1.91
+  pei: 11.05
+  methanol: 0.92
+
+eol:
+  landfill: 0.02
+  combustion: 1.29
+
+transport:
+  sea_shipping: 0.005
+  road_trucking: 0.086
