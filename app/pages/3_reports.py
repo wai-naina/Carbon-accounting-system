@@ -59,7 +59,19 @@ def load_summary_data(session, pair_filter: str = None) -> pd.DataFrame:
             total_energy = w.total_energy_kwh or 0
             total_cycles = w.total_cycles or 0
             thermal_energy = w.thermal_energy_kwh or 0
-            auxiliary_energy = w.auxiliary_energy_kwh or 0
+            auxiliary_energy_stored = w.auxiliary_energy_kwh or 0
+            
+            # Ensure energy breakdown matches total_energy
+            # If total_energy > thermal + auxiliary, allocate the difference
+            # Use typical 70% thermal / 30% auxiliary split for missing energy
+            energy_sum = thermal_energy + auxiliary_energy_stored
+            if total_energy > energy_sum and total_energy > 0:
+                missing_energy = total_energy - energy_sum
+                # Allocate missing energy: 70% thermal (boiler), 30% auxiliary
+                thermal_energy = thermal_energy + (missing_energy * 0.70)
+                auxiliary_energy = auxiliary_energy_stored + (missing_energy * 0.30)
+            else:
+                auxiliary_energy = auxiliary_energy_stored
         
         # Collected CO2 = liquefied if available, otherwise bag
         collected_co2 = liq if liq > 0 else bag
@@ -85,10 +97,20 @@ def load_summary_data(session, pair_filter: str = None) -> pd.DataFrame:
             sorbent_embodied = w.sorbent_embodied_kg or 0
         
         # Calculate emissions
+        # Base total operational emissions on TOTAL energy, then split between
+        # thermal and auxiliary so their sum matches the operational total.
         grid_ef = 0.049
-        thermal_emissions = thermal_energy * grid_ef
-        auxiliary_emissions = auxiliary_energy * grid_ef
         operational_emissions = total_energy * grid_ef
+
+        if total_energy > 0:
+            aux_share = min(max(auxiliary_energy / total_energy, 0.0), 1.0) if auxiliary_energy > 0 else 0.30
+            thermal_share = 1.0 - aux_share
+        else:
+            aux_share = 0.0
+            thermal_share = 0.0
+
+        auxiliary_emissions = operational_emissions * aux_share
+        thermal_emissions = operational_emissions * thermal_share
         total_emissions = operational_emissions + embodied
         net_removal = collected_co2 - total_emissions
         
@@ -201,7 +223,7 @@ def main() -> None:
     stat_col1, stat_col2, stat_col3, stat_col4, stat_col5 = st.columns(5)
     
     with stat_col1:
-        st.metric("Total CO₂ Captured", f"{total_captured:,.1f} kg", f"{total_captured/1000:.2f} tonnes")
+        st.metric("Total CO₂ Liquefied", f"{total_captured:,.1f} kg", f"{total_captured/1000:.2f} tonnes")
     with stat_col2:
         st.metric("Total Emissions", f"{total_emissions:,.1f} kg", f"{total_emissions/1000:.2f} tonnes")
     with stat_col3:

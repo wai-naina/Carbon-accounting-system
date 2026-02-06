@@ -61,62 +61,85 @@ def main() -> None:
         infra_items = session.query(EmbodiedInfrastructure).count()
         sorbent_batches = session.query(EmbodiedSorbent).count()
         
-        # Get latest summary
+        # Get latest summary (for context)
         latest = session.query(WeeklySummary).order_by(
             WeeklySummary.year.desc(), WeeklySummary.week_number.desc()
         ).first()
         
-        # Get cumulative stats
+        # Get cumulative stats across all tracked weeks
         from sqlalchemy import func
         cumulative = session.query(
-            func.sum(WeeklySummary.liquefied_co2_kg),
+            func.sum(WeeklySummary.total_ads_co2_kg),
+            func.sum(WeeklySummary.total_des_co2_kg),
             func.sum(WeeklySummary.total_bag_co2_kg),
+            func.sum(WeeklySummary.liquefied_co2_kg),
             func.sum(WeeklySummary.total_emissions_kg),
             func.sum(WeeklySummary.net_removal_kg),
         ).first()
         
-        total_liquefied = cumulative[0] or 0
-        total_bag = cumulative[1] or 0
-        total_captured = total_liquefied if total_liquefied > 0 else total_bag
-        total_emissions = cumulative[2] or 0
-        total_net = cumulative[3] or 0
+        total_ads = (cumulative[0] or 0) if cumulative else 0
+        total_des = (cumulative[1] or 0) if cumulative else 0
+        total_bag = (cumulative[2] or 0) if cumulative else 0
+        total_liquefied = (cumulative[3] or 0) if cumulative else 0
+        total_emissions = (cumulative[4] or 0) if cumulative else 0
+        total_net = (cumulative[5] or 0) if cumulative else 0
+
+        # Weeks where liquefaction data exists (for context text)
+        liquefaction_weeks = (
+            session.query(WeeklySummary)
+            .filter(WeeklySummary.liquefied_co2_kg.isnot(None), WeeklySummary.liquefied_co2_kg > 0)
+            .count()
+        )
     finally:
         session.close()
 
     # Key Metrics Row
     col1, col2, col3, col4 = st.columns(4)
     
+    tracking_label = (
+        f"Total across {total_weeks} tracked week{'s' if total_weeks != 1 else ''}"
+        if total_weeks
+        else "No weeks tracked yet"
+    )
+    
     with col1:
         status_class = "positive" if total_net > 0 else ("negative" if total_net < 0 else "neutral")
         net_icon = "🌱" if total_net > 0 else "⚠️"
         st.markdown(f"""
         <div class="metric-card {status_class}">
-            <h3>{net_icon} Lifetime Net Removal</h3>
+            <h3>{net_icon} Cumulative Net Removal</h3>
             <div class="value">{total_net:,.1f} kg</div>
+            <div class="subtitle">{tracking_label}</div>
         </div>
         """, unsafe_allow_html=True)
     
     with col2:
         st.markdown(f"""
         <div class="metric-card positive">
-            <h3>♻️ Total CO₂ Captured</h3>
-            <div class="value">{total_captured:,.1f} kg</div>
+            <h3>🎈 Total CO₂ Collected (Bag)</h3>
+            <div class="value">{total_bag:,.1f} kg</div>
         </div>
         """, unsafe_allow_html=True)
     
     with col3:
+        liquefied_label = (
+            f"Tracked in {liquefaction_weeks} week{'s' if liquefaction_weeks != 1 else ''}"
+            if total_liquefied > 0
+            else "No liquefaction data yet"
+        )
         st.markdown(f"""
-        <div class="metric-card negative">
-            <h3>⚡ Total Emissions</h3>
-            <div class="value">{total_emissions:,.1f} kg</div>
+        <div class="metric-card info">
+            <h3>❄️ Total CO₂ Liquefied</h3>
+            <div class="value">{total_liquefied:,.1f} kg</div>
+            <div class="subtitle">{liquefied_label}</div>
         </div>
         """, unsafe_allow_html=True)
     
     with col4:
         st.markdown(f"""
-        <div class="metric-card info">
-            <h3>📅 Weeks Tracked</h3>
-            <div class="value">{total_weeks}</div>
+        <div class="metric-card negative">
+            <h3>⚡ Total Emissions</h3>
+            <div class="value">{total_emissions:,.1f} kg</div>
         </div>
         """, unsafe_allow_html=True)
 
@@ -125,11 +148,12 @@ def main() -> None:
     # Process Flow Visualization
     st.markdown('<div class="section-header">🔄 CO₂ Capture Process Flow</div>', unsafe_allow_html=True)
     
-    if latest:
-        ads = latest.total_ads_co2_kg or 0
-        des = latest.total_des_co2_kg or 0
-        bag = latest.total_bag_co2_kg or 0
-        liq = latest.liquefied_co2_kg or 0
+    if total_weeks > 0 and (total_ads > 0 or total_des > 0 or total_bag > 0 or total_liquefied > 0):
+        # Use cumulative totals across all tracked weeks
+        ads = total_ads
+        des = total_des
+        bag = total_bag
+        liq = total_liquefied
         
         flow_cols = st.columns([3, 1, 3, 1, 3, 1, 3])
         
@@ -179,7 +203,20 @@ def main() -> None:
             </div>
             """, unsafe_allow_html=True)
         
-        st.caption(f"📅 Latest: {latest.year}-W{latest.week_number:02d} ({latest.start_date} to {latest.end_date})")
+        # Context caption: tracking period and liquefaction coverage
+        caption_parts = [
+            f"📈 Cumulative totals across {total_weeks} tracked week{'s' if total_weeks != 1 else ''}."
+        ]
+        if latest:
+            caption_parts.append(
+                f" Latest week: {latest.year}-W{latest.week_number:02d} ({latest.start_date} to {latest.end_date})."
+            )
+        if total_liquefied > 0 and liquefaction_weeks < total_weeks:
+            caption_parts.append(
+                f" Liquefied CO₂ data currently available for {liquefaction_weeks} of {total_weeks} weeks."
+            )
+        
+        st.caption(" ".join(caption_parts))
     else:
         st.markdown("""
         <div class="info-box warning">

@@ -304,6 +304,7 @@ def main() -> None:
                     year=iso_year,
                     week_number=iso_week,
                     liquefied_co2_kg=liquefied,
+                    liquefaction_energy_kwh=liq_energy,
                     notes=notes,
                     created_by=st.session_state.get("user_id"),
                 )

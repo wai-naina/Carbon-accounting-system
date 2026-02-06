@@ -194,6 +194,9 @@ def emissions_breakdown_pie(df: pd.DataFrame) -> go.Figure:
     if total == 0:
         return None
     
+    # Get week label for title
+    week_label = latest.get("week_label", "Selected Week")
+    
     fig = go.Figure(data=[go.Pie(
         labels=["Thermal (Boiler)", "Auxiliary", "Embodied"],
         values=[thermal, auxiliary, embodied],
@@ -210,7 +213,7 @@ def emissions_breakdown_pie(df: pd.DataFrame) -> go.Figure:
     )
     apply_chart_layout(
         fig,
-        title="🥧 Emissions Breakdown (Latest Week)",
+        title=f"🥧 Emissions Breakdown ({week_label})",
         height=400,
         showlegend=True,
     )
@@ -291,14 +294,18 @@ def loss_analysis_chart(df: pd.DataFrame) -> go.Figure:
     
     fig = go.Figure()
     
-    # Define colors with good contrast
-    stage_colors = ["#FCD34D", "#FBBF24", "#F59E0B"]  # Yellow to amber gradient
+    # Use distinct, colorblind-friendly colors for each stage
+    stage_colors = {
+        "stage1": "#14B8A6",  # Teal for Stage 1 (Ads→Des)
+        "stage2": "#F59E0B",  # Amber for Stage 2 (Des→Bag)
+        "stage3": "#F43F5E",  # Rose for Stage 3 (Bag→Liq)
+    }
     
     fig.add_trace(go.Bar(
         name="Stage 1 (Ads→Des)",
         x=df["week_label"],
         y=df.get("loss_stage_1_kg", [0] * len(df)),
-        marker_color=stage_colors[0],
+        marker_color=stage_colors["stage1"],
         marker_line_color="#1E293B",
         marker_line_width=1,
         hovertemplate="<b>%{x}</b><br>Stage 1 Loss: %{y:,.1f} kg<extra></extra>",
@@ -308,7 +315,7 @@ def loss_analysis_chart(df: pd.DataFrame) -> go.Figure:
         name="Stage 2 (Des→Bag)",
         x=df["week_label"],
         y=df.get("loss_stage_2_kg", [0] * len(df)),
-        marker_color=stage_colors[1],
+        marker_color=stage_colors["stage2"],
         marker_line_color="#1E293B",
         marker_line_width=1,
         hovertemplate="<b>%{x}</b><br>Stage 2 Loss: %{y:,.1f} kg<extra></extra>",
@@ -318,7 +325,7 @@ def loss_analysis_chart(df: pd.DataFrame) -> go.Figure:
         name="Stage 3 (Bag→Liq)",
         x=df["week_label"],
         y=df.get("loss_stage_3_kg", [0] * len(df)),
-        marker_color=stage_colors[2],
+        marker_color=stage_colors["stage3"],
         marker_line_color="#1E293B",
         marker_line_width=1,
         hovertemplate="<b>%{x}</b><br>Stage 3 Loss: %{y:,.1f} kg<extra></extra>",

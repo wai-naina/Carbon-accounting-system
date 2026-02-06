@@ -19,18 +19,42 @@ def require_login() -> bool:
 
 
 def show_login_form() -> None:
-    st.title("🌍 Octavia Carbon Accounting System")
+    # Apply light theme CSS for login page
+    st.markdown("""
+    <style>
+    /* Login page light theme */
+    .stApp {
+        background-color: #FFFFFF !important;
+    }
+    .main .block-container {
+        background-color: #FFFFFF !important;
+    }
+    h1, h2, h3, h4, h5, h6 {
+        color: #1F2937 !important;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+    
+    # Center the login form
+    st.markdown("""
+    <div style="max-width: 400px; margin: 0 auto; padding: 2rem 0;">
+    """, unsafe_allow_html=True)
+    
+    st.title("Octavia Carbon Accounting System")
     st.subheader("Login")
+    
     with st.form("login_form", clear_on_submit=False):
         username = st.text_input("Username")
         password = st.text_input("Password", type="password")
-        submitted = st.form_submit_button("Login")
+        submitted = st.form_submit_button("Login", use_container_width=True)
         if submitted:
             if authenticate_user(username.strip(), password):
                 st.session_state.authenticated = True
                 st.rerun()
             else:
                 st.error("Invalid username or password")
+    
+    st.markdown("</div>", unsafe_allow_html=True)
 
 
 def authenticate_user(username: str, password: str) -> bool:

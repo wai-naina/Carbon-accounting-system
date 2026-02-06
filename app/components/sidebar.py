@@ -11,16 +11,16 @@ def render_nelion_filter() -> str:
     """
     st.sidebar.markdown("""
     <div style="margin-top: 1rem; margin-bottom: 0.5rem;">
-        <span style="font-size: 0.8rem; color: #94A3B8; letter-spacing: 1px; text-transform: uppercase;">
-            🔬 Data Filter
+        <span style="font-size: 0.75rem; color: #6B7280; letter-spacing: 0.5px; text-transform: uppercase; font-weight: 500;">
+            Data Filter
         </span>
     </div>
     """, unsafe_allow_html=True)
     
     pair_options = {
-        "all": "🔄 All Nelions (Combined)",
-        "1n3": "🌟 Nelion 1 & 3 (Better Sorbent)",
-        "2n4": "⚙️ Nelion 2 & 4",
+        "all": "All Nelions (Combined)",
+        "1n3": "Nelion 1 & 3 (Better Sorbent)",
+        "2n4": "Nelion 2 & 4",
     }
     
     # Initialize session state if not exists
@@ -41,15 +41,15 @@ def render_nelion_filter() -> str:
         pair_name = "Nelion 1 & 3" if selected_pair == "1n3" else "Nelion 2 & 4"
         st.sidebar.markdown(f"""
         <div style="
-            background: linear-gradient(135deg, #1A5F5F 0%, #2D8F8F 100%);
+            background: #1A5F5F;
             color: white;
             padding: 0.5rem 0.75rem;
-            border-radius: 8px;
-            font-size: 0.8rem;
+            border-radius: 4px;
+            font-size: 0.875rem;
             margin-top: 0.5rem;
             text-align: center;
         ">
-            ✅ Filtering: <strong>{pair_name}</strong>
+            Filtering: <strong>{pair_name}</strong>
         </div>
         """, unsafe_allow_html=True)
     
@@ -57,10 +57,10 @@ def render_nelion_filter() -> str:
     return None if selected_pair == "all" else selected_pair
 
 
-def get_filter_display_name(pair_filter: str, with_emoji: bool = True) -> str:
+def get_filter_display_name(pair_filter: str, with_emoji: bool = False) -> str:
     """Get display name for the current filter."""
     if pair_filter == "1n3":
-        return "Nelion 1 & 3 (Better Sorbent)" if not with_emoji else "Nelion 1 & 3 🌟"
+        return "Nelion 1 & 3 (Better Sorbent)"
     elif pair_filter == "2n4":
         return "Nelion 2 & 4"
     return "All Nelions"
@@ -72,7 +72,7 @@ def render_filter_indicator(pair_filter: str) -> None:
         pair_name = get_filter_display_name(pair_filter)
         st.markdown(f"""
         <div class="filter-badge">
-            🔬 Filtered: <strong>{pair_name}</strong>
+            Filtered: <strong>{pair_name}</strong>
             <span style="opacity: 0.7; font-size: 0.75rem;">• Change in sidebar</span>
         </div>
         """, unsafe_allow_html=True)

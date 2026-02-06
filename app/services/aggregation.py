@@ -84,6 +84,7 @@ def create_or_update_weekly_summary(
     year: int,
     week_number: int,
     liquefied_co2_kg: float,
+    liquefaction_energy_kwh: float = 0.0,
     notes: Optional[str],
     created_by: Optional[int],
 ) -> WeeklySummary:
@@ -101,7 +102,9 @@ def create_or_update_weekly_summary(
     des_co2 = sum(safe_value(c.des_co2_kg) for c in cycles)
     bag_co2 = sum(safe_value(c.bag_co2_kg) for c in cycles)
     boiler_kwh = sum(safe_value(c.boiler_kwh) for c in cycles)
-    auxiliary_kwh = sum(
+
+    # Base auxiliary energy from SCADA (fans, pumps, etc.)
+    auxiliary_kwh_base = sum(
         safe_value(c.srv_lrvp_kwh)
         + safe_value(c.ct_kwh)
         + safe_value(c.nm1_fan_kwh)
@@ -110,9 +113,25 @@ def create_or_update_weekly_summary(
         + safe_value(c.nm4_fan_kwh)
         for c in cycles
     )
-    total_kwh = sum(safe_value(c.total_kwh) for c in cycles)
-    if total_kwh == 0:
-        total_kwh = boiler_kwh + auxiliary_kwh
+
+    # Base total energy from SCADA
+    total_kwh_base = sum(safe_value(c.total_kwh) for c in cycles)
+    
+    # If we have total_kwh but no breakdown (boiler/auxiliary are 0 or missing),
+    # estimate the split using typical ratios: 70% thermal (boiler), 30% auxiliary
+    if total_kwh_base > 0 and (boiler_kwh == 0 and auxiliary_kwh_base == 0):
+        # SCADA provided total but no component breakdown - estimate split
+        boiler_kwh = total_kwh_base * 0.70  # Typical: 70% thermal
+        auxiliary_kwh_base = total_kwh_base * 0.30  # Typical: 30% auxiliary
+    elif total_kwh_base == 0:
+        # Fallback: use sum of components if total is missing
+        total_kwh_base = boiler_kwh + auxiliary_kwh_base
+
+    # Liquefaction energy is plant-level downstream energy.
+    # Treat it as auxiliary energy and add it on top of SCADA auxiliary.
+    liquefaction_energy_kwh = safe_value(liquefaction_energy_kwh)
+    auxiliary_kwh = auxiliary_kwh_base + liquefaction_energy_kwh
+    total_kwh = total_kwh_base + liquefaction_energy_kwh
     steam_kg = sum(safe_value(c.steam_kg) for c in cycles)
 
     grid_ef = _get_config_value(session, "grid_emission_factor", 0.049)
@@ -157,6 +176,7 @@ def create_or_update_weekly_summary(
     summary.total_des_co2_kg = des_co2
     summary.total_bag_co2_kg = bag_co2
     summary.liquefied_co2_kg = liquefied_co2_kg
+    summary.liquefaction_energy_kwh = liquefaction_energy_kwh
     summary.thermal_energy_kwh = boiler_kwh
     summary.auxiliary_energy_kwh = auxiliary_kwh
     summary.total_energy_kwh = total_kwh
@@ -210,7 +230,9 @@ def get_weekly_metrics_by_pair(
     des_co2 = sum(safe_value(c.des_co2_kg) for c in cycles)
     bag_co2 = sum(safe_value(c.bag_co2_kg) for c in cycles)
     boiler_kwh = sum(safe_value(c.boiler_kwh) for c in cycles)
-    auxiliary_kwh = sum(
+
+    # Base auxiliary energy from SCADA for this pair
+    auxiliary_kwh_base = sum(
         safe_value(c.srv_lrvp_kwh)
         + safe_value(c.ct_kwh)
         + safe_value(c.nm1_fan_kwh)
@@ -219,9 +241,33 @@ def get_weekly_metrics_by_pair(
         + safe_value(c.nm4_fan_kwh)
         for c in cycles
     )
-    total_kwh = sum(safe_value(c.total_kwh) for c in cycles)
-    if total_kwh == 0:
-        total_kwh = boiler_kwh + auxiliary_kwh
+    total_kwh_base = sum(safe_value(c.total_kwh) for c in cycles)
+    if total_kwh_base == 0:
+        total_kwh_base = boiler_kwh + auxiliary_kwh_base
+
+    # Proportionally allocate plant-level liquefaction energy to this pair
+    liquefaction_energy_kwh = 0.0
+    if pair_filter:
+        weekly_summary = (
+            session.query(WeeklySummary)
+            .filter(
+                WeeklySummary.year == year,
+                WeeklySummary.week_number == week_number,
+            )
+            .first()
+        )
+        if weekly_summary and weekly_summary.liquefaction_energy_kwh:
+            # Total BAG CO2 from all Nelions this week (no filter)
+            all_cycles = get_filtered_cycles(session, start_dt, end_dt, None)
+            total_bag_all = sum(safe_value(c.bag_co2_kg) for c in all_cycles)
+            if total_bag_all > 0 and bag_co2 > 0:
+                bag_ratio = bag_co2 / total_bag_all
+                liquefaction_energy_kwh = safe_value(
+                    weekly_summary.liquefaction_energy_kwh
+                ) * bag_ratio
+
+    auxiliary_kwh = auxiliary_kwh_base + liquefaction_energy_kwh
+    total_kwh = total_kwh_base + liquefaction_energy_kwh
     steam_kg = sum(safe_value(c.steam_kg) for c in cycles)
     
     return {
@@ -233,6 +279,7 @@ def get_weekly_metrics_by_pair(
         "auxiliary_kwh": auxiliary_kwh,
         "total_kwh": total_kwh,
         "steam_kg": steam_kg,
+        "liquefaction_energy_kwh": liquefaction_energy_kwh,
     }
 
 

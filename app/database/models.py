@@ -91,6 +91,8 @@ class WeeklySummary(Base):
     total_des_co2_kg = Column(Float)
     total_bag_co2_kg = Column(Float)
     liquefied_co2_kg = Column(Float)
+    # Plant-level liquefaction energy for the week (kWh)
+    liquefaction_energy_kwh = Column(Float)
 
     loss_stage_1_kg = Column(Float)
     loss_stage_2_kg = Column(Float)
