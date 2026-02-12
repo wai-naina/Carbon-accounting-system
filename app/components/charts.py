@@ -566,8 +566,8 @@ def waterfall_chart(captured: float, operational: float, embodied: float) -> go.
     return fig
 
 
-def nelion_comparison_chart(pair_data: dict) -> go.Figure:
-    """Create a comparison chart between Nelion pairs."""
+def module_comparison_chart(pair_data: dict) -> go.Figure:
+    """Create a comparison chart between Module pairs."""
     if not pair_data:
         return None
     
@@ -588,7 +588,7 @@ def nelion_comparison_chart(pair_data: dict) -> go.Figure:
     fig = go.Figure()
     
     fig.add_trace(go.Bar(
-        name="Nelion 1 & 3 🌟",
+        name="Module 1 & 3 🌟",
         x=categories,
         y=n13_values,
         marker_color="#22C55E",
@@ -600,7 +600,7 @@ def nelion_comparison_chart(pair_data: dict) -> go.Figure:
     ))
     
     fig.add_trace(go.Bar(
-        name="Nelion 2 & 4",
+        name="Module 2 & 4",
         x=categories,
         y=n24_values,
         marker_color="#3B82F6",
@@ -613,7 +613,7 @@ def nelion_comparison_chart(pair_data: dict) -> go.Figure:
     
     apply_chart_layout(
         fig,
-        title="🔬 Nelion Pair Performance Comparison",
+        title="🔬 Module Pair Performance Comparison",
         height=400,
         extra_top_margin=20,
     )

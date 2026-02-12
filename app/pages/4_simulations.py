@@ -11,7 +11,7 @@ import streamlit as st
 
 from app.auth.authentication import require_login
 from app.components.branding import get_brand_css, render_logo
-from app.components.sidebar import render_nelion_filter, get_filter_display_name
+from app.components.sidebar import render_module_filter, get_filter_display_name
 from app.database.connection import get_session, init_db
 from app.database.models import WeeklySummary, SystemConfig
 from app.services.aggregation import get_weekly_metrics_by_pair
@@ -108,8 +108,8 @@ def main() -> None:
     # Sidebar with logo
     render_logo(location="sidebar")
     
-    # Render the Nelion pair filter in sidebar and get selected value
-    pair_filter = render_nelion_filter()
+    # Render the Module pair filter in sidebar and get selected value
+    pair_filter = render_module_filter()
 
     st.title("🔋 Energy Scenario Analysis")
     

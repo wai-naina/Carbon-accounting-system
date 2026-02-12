@@ -13,15 +13,15 @@ import streamlit as st
 from app.auth.authentication import require_login
 from app.components.branding import get_brand_css, render_logo
 from app.components.charts import cumulative_chart, co2_flow_chart
-from app.components.sidebar import render_nelion_filter, get_filter_display_name
+from app.components.sidebar import render_module_filter, get_filter_display_name
 from app.database.connection import get_session, init_db
 from app.database.models import WeeklySummary, CycleData
 from app.services.aggregation import aggregate_cycles_by_pair, get_weekly_metrics_by_pair
-from app.services.calculations import classify_nelion_pair
+from app.services.calculations import classify_module_pair
 
 
 def load_summary_data(session, pair_filter: str = None) -> pd.DataFrame:
-    """Load weekly summary data, optionally filtered by Nelion pair."""
+    """Load weekly summary data, optionally filtered by Module pair."""
     summaries = (
         session.query(WeeklySummary)
         .order_by(WeeklySummary.year, WeeklySummary.week_number)
@@ -152,11 +152,11 @@ def load_cycle_data(session) -> pd.DataFrame:
     cycles = session.query(CycleData).order_by(CycleData.start_time).all()
     rows = []
     for c in cycles:
-        pair = classify_nelion_pair(c.machine) or "Unknown"
+        pair = classify_module_pair(c.machine) or "Unknown"
         rows.append({
             "Cycle #": c.cycle_number,
             "Machine": c.machine,
-            "Nelion Pair": pair.upper() if pair != "Unknown" else pair,
+            "Module Pair": pair.upper() if pair != "Unknown" else pair,
             "Start Time": c.start_time,
             "ADS CO₂ (kg)": c.ads_co2_kg or 0,
             "DES CO₂ (kg)": c.des_co2_kg or 0,
@@ -181,8 +181,8 @@ def main() -> None:
     # Sidebar with logo
     render_logo(location="sidebar")
     
-    # Render the Nelion pair filter in sidebar and get selected value
-    pair_filter = render_nelion_filter()
+    # Render the Module pair filter in sidebar and get selected value
+    pair_filter = render_module_filter()
 
     st.title("📈 Reports & Analysis")
     
@@ -200,13 +200,13 @@ def main() -> None:
         
         # Filter cycle data if pair filter is active
         if pair_filter:
-            cycle_df = cycle_df[cycle_df["Nelion Pair"] == pair_filter.upper()]
+            cycle_df = cycle_df[cycle_df["Module Pair"] == pair_filter.upper()]
     finally:
         session.close()
 
     if summary_df.empty:
         if pair_filter:
-            st.warning(f"No data available for {pair_filter.upper()}. Try selecting 'All Nelions' in the sidebar.")
+            st.warning(f"No data available for {pair_filter.upper()}. Try selecting 'All Modules' in the sidebar.")
         else:
             st.warning("No data available. Import SCADA data and create weekly summaries first.")
         return
@@ -239,7 +239,7 @@ def main() -> None:
 
     # Report type selection
     report_tab1, report_tab2, report_tab3, report_tab4, report_tab5 = st.tabs([
-        "📋 Weekly Summary", "🔄 CO₂ Flow", "🔬 Nelion Pairs", "⚡ Energy Analysis", "📤 Export"
+        "📋 Weekly Summary", "🔄 CO₂ Flow", "🔬 Module Pairs", "⚡ Energy Analysis", "📤 Export"
     ])
 
     with report_tab1:
@@ -373,8 +373,8 @@ def main() -> None:
             st.plotly_chart(flow_chart, width="stretch")
 
     with report_tab3:
-        st.markdown("### 🔬 Nelion Pair Performance Analysis")
-        st.markdown("Compare performance between Nelion pairs 1&3 (better sorbent) vs 2&4")
+        st.markdown("### 🔬 Module Pair Performance Analysis")
+        st.markdown("Compare performance between Module pairs 1&3 (better sorbent) vs 2&4")
         
         # Get pair analysis
         session = get_session()
@@ -395,7 +395,7 @@ def main() -> None:
                 better_pair = "1&3" if p1["overall_efficiency"] > p2["overall_efficiency"] else "2&4"
                 st.metric(
                     "Higher Efficiency",
-                    f"Nelion {better_pair}",
+                    f"Module {better_pair}",
                     f"+{comparison['efficiency_difference']:.1f}% better",
                 )
             
@@ -434,7 +434,7 @@ def main() -> None:
                     "Avg Adsorbed/Cycle (kg)",
                     "Avg Collected/Cycle (kg)",
                 ],
-                "Nelion 1&3 🌟": [
+                "Module 1&3 🌟": [
                     str(p1["cycles"]),
                     f"{p1['ads_co2_kg']:.2f}",
                     f"{p1['des_co2_kg']:.2f}",
@@ -449,7 +449,7 @@ def main() -> None:
                     f"{p1['avg_ads_per_cycle']:.3f}",
                     f"{p1['avg_bag_per_cycle']:.3f}",
                 ],
-                "Nelion 2&4": [
+                "Module 2&4": [
                     str(p2["cycles"]),
                     f"{p2['ads_co2_kg']:.2f}",
                     f"{p2['des_co2_kg']:.2f}",
@@ -494,7 +494,7 @@ def main() -> None:
                 fig1 = go.Figure()
                 
                 fig1.add_trace(go.Bar(
-                    name="Nelion 1&3",
+                    name="Module 1&3",
                     x=["Adsorbed", "Desorbed", "Collected"],
                     y=[p1["ads_co2_kg"], p1["des_co2_kg"], p1["bag_co2_kg"]],
                     marker_color="#4CAF50",
@@ -503,7 +503,7 @@ def main() -> None:
                     textfont=dict(color="#f8fafc"),
                 ))
                 fig1.add_trace(go.Bar(
-                    name="Nelion 2&4",
+                    name="Module 2&4",
                     x=["Adsorbed", "Desorbed", "Collected"],
                     y=[p2["ads_co2_kg"], p2["des_co2_kg"], p2["bag_co2_kg"]],
                     marker_color="#2196F3",
@@ -530,7 +530,7 @@ def main() -> None:
                 fig2 = go.Figure()
                 
                 fig2.add_trace(go.Bar(
-                    name="Nelion 1&3",
+                    name="Module 1&3",
                     x=["Ads→Des", "Des→Bag", "Overall"],
                     y=[p1["ads_to_des_efficiency"], p1["des_to_bag_efficiency"], p1["overall_efficiency"]],
                     marker_color="#4CAF50",
@@ -539,7 +539,7 @@ def main() -> None:
                     textfont=dict(color="#f8fafc"),
                 ))
                 fig2.add_trace(go.Bar(
-                    name="Nelion 2&4",
+                    name="Module 2&4",
                     x=["Ads→Des", "Des→Bag", "Overall"],
                     y=[p2["ads_to_des_efficiency"], p2["des_to_bag_efficiency"], p2["overall_efficiency"]],
                     marker_color="#2196F3",
@@ -566,7 +566,7 @@ def main() -> None:
             st.markdown("#### CO₂ Contribution by Pair")
             
             fig3 = go.Figure(data=[go.Pie(
-                labels=["Nelion 1&3", "Nelion 2&4"],
+                labels=["Module 1&3", "Module 2&4"],
                 values=[p1["bag_co2_kg"], p2["bag_co2_kg"]],
                 marker_colors=["#4CAF50", "#2196F3"],
                 hole=0.4,
@@ -589,16 +589,16 @@ def main() -> None:
             st.markdown("#### Cycle Data by Pair")
             
             pair_filter = st.selectbox(
-                "Filter by Nelion Pair",
+                "Filter by Module Pair",
                 ["All", "1N3 Only", "2N4 Only"],
                 key="pair_filter"
             )
             
             filtered_cycles = cycle_df.copy()
             if pair_filter == "1N3 Only":
-                filtered_cycles = filtered_cycles[filtered_cycles["Nelion Pair"] == "1N3"]
+                filtered_cycles = filtered_cycles[filtered_cycles["Module Pair"] == "1N3"]
             elif pair_filter == "2N4 Only":
-                filtered_cycles = filtered_cycles[filtered_cycles["Nelion Pair"] == "2N4"]
+                filtered_cycles = filtered_cycles[filtered_cycles["Module Pair"] == "2N4"]
             
             st.dataframe(
                 filtered_cycles.sort_values("Start Time", ascending=False).head(50),
@@ -607,7 +607,7 @@ def main() -> None:
             )
             st.caption(f"Showing {min(50, len(filtered_cycles))} of {len(filtered_cycles)} cycles")
         else:
-            st.info("No cycle data available. Import SCADA data to see Nelion pair analysis.")
+            st.info("No cycle data available. Import SCADA data to see Module pair analysis.")
 
     with report_tab4:
         st.markdown("### ⚡ Energy Analysis")

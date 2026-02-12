@@ -61,7 +61,7 @@ The primary objective of the CAS is to determine whether Octavia Carbon's operat
 Octavia Carbon's DAC process consists of four main phases:
 
 #### Phase 1: Adsorption (CO₂ Capture)
-- Ambient air is drawn through 4 reactor modules (Nelions) using fans
+- Ambient air is drawn through 4 reactor modules using fans
 - Each module pair operates together: Module 1n3 and Module 2n4
 - The reactors contain 352 monoliths total (88 per reactor)
 - Monoliths are honeycomb-structured cordierite supports coated with alumina washcoat
@@ -221,7 +221,7 @@ While this system is for internal tracking, it is designed to align with the Pur
 | **LCA** | Life Cycle Assessment - comprehensive environmental impact analysis |
 | **Monolith** | Honeycomb-structured support material for sorbent |
 | **NCGS** | Non-Condensable Gases - gases that don't condense during processing |
-| **Nelion** | Octavia's name for reactor modules |
+| **Module** | Reactor modules (paired as 1&3, 2&4) |
 | **Net Removal** | Gross capture minus all emissions and losses |
 | **Operational Emissions** | Emissions from energy used during operations |
 | **PEI** | Polyethyleneimine - the amine-based sorbent material |

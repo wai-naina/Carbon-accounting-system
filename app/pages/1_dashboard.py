@@ -17,14 +17,14 @@ from app.components.charts import (
     loss_analysis_chart,
     waterfall_chart,
 )
-from app.components.sidebar import render_nelion_filter, get_filter_display_name
+from app.components.sidebar import render_module_filter, get_filter_display_name
 from app.database.connection import get_session, init_db
 from app.database.models import WeeklySummary
 from app.services.aggregation import get_weekly_metrics_by_pair
 
 
 def load_weekly_df(session, pair_filter: str = None) -> pd.DataFrame:
-    """Load weekly summary data, optionally filtered by Nelion pair."""
+    """Load weekly summary data, optionally filtered by Module pair."""
     summaries = (
         session.query(WeeklySummary)
         .order_by(WeeklySummary.year, WeeklySummary.week_number)
@@ -166,8 +166,8 @@ def main() -> None:
     # Sidebar with logo
     render_logo(location="sidebar")
     
-    # Render the Nelion pair filter in sidebar and get selected value
-    pair_filter = render_nelion_filter()
+    # Render the Module pair filter in sidebar and get selected value
+    pair_filter = render_module_filter()
     
     session = get_session()
     try:

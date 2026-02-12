@@ -7,20 +7,20 @@ def safe_value(value: Optional[float]) -> float:
     return float(value or 0)
 
 
-# Nelion pair classification
-NELION_PAIRS = {
+# Module pair classification
+MODULE_PAIRS = {
     "1n3": ["Module 1n3", "Module 1", "Module 3", "NM1", "NM3", "1n3"],
     "2n4": ["Module 2n4", "Module 2", "Module 4", "NM2", "NM4", "2n4"],
 }
 
 
-def classify_nelion_pair(machine: str) -> Optional[str]:
-    """Classify a machine into its Nelion pair (1n3 or 2n4)."""
+def classify_module_pair(machine: str) -> Optional[str]:
+    """Classify a machine into its Module pair (1n3 or 2n4)."""
     if not machine:
         return None
     machine_lower = machine.lower().strip()
     
-    for pair, machines in NELION_PAIRS.items():
+    for pair, machines in MODULE_PAIRS.items():
         for m in machines:
             if m.lower() in machine_lower or machine_lower in m.lower():
                 return pair
@@ -37,11 +37,11 @@ def classify_nelion_pair(machine: str) -> Optional[str]:
 
 
 def get_pair_display_name(pair: str) -> str:
-    """Get display name for a Nelion pair."""
+    """Get display name for a Module pair."""
     if pair == "1n3":
-        return "Nelion 1&3 (Better Sorbent)"
+        return "Module 1&3 (Better Sorbent)"
     elif pair == "2n4":
-        return "Nelion 2&4"
+        return "Module 2&4"
     return pair
 
 

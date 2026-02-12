@@ -14,7 +14,7 @@ from app.database.models import (
 )
 from app.services.calculations import (
     calculate_weekly_metrics,
-    classify_nelion_pair,
+    classify_module_pair,
     safe_value,
 )
 
@@ -25,26 +25,26 @@ def get_week_dates(year: int, week_number: int) -> Tuple[date, date]:
     return week_start, week_end
 
 
-def get_nelion_filter() -> Optional[str]:
-    """Get the current Nelion pair filter from session state."""
+def get_module_filter() -> Optional[str]:
+    """Get the current Module pair filter from session state."""
     try:
         import streamlit as st
-        filter_val = st.session_state.get("nelion_pair_filter", "all")
+        filter_val = st.session_state.get("module_pair_filter", "all")
         return None if filter_val == "all" else filter_val
     except Exception:
         return None
 
 
 def filter_cycles_by_pair(cycles: list, pair_filter: Optional[str]) -> list:
-    """Filter a list of CycleData objects by Nelion pair."""
+    """Filter a list of CycleData objects by Module pair."""
     if not pair_filter:
         return cycles
     
-    return [c for c in cycles if classify_nelion_pair(c.machine) == pair_filter]
+    return [c for c in cycles if classify_module_pair(c.machine) == pair_filter]
 
 
 def get_filtered_cycles(session, start_dt: datetime, end_dt: datetime, pair_filter: Optional[str] = None) -> list:
-    """Get cycles for a date range, optionally filtered by Nelion pair."""
+    """Get cycles for a date range, optionally filtered by Module pair."""
     cycles = (
         session.query(CycleData)
         .filter(and_(CycleData.start_time >= start_dt, CycleData.start_time < end_dt))
@@ -217,7 +217,7 @@ def get_weekly_metrics_by_pair(
     pair_filter: Optional[str] = None,
 ) -> dict:
     """
-    Calculate metrics for a specific week, optionally filtered by Nelion pair.
+    Calculate metrics for a specific week, optionally filtered by Module pair.
     Returns aggregated CO2, energy, and derived metrics.
     """
     week_start, week_end = get_week_dates(year, week_number)
@@ -257,7 +257,7 @@ def get_weekly_metrics_by_pair(
             .first()
         )
         if weekly_summary and weekly_summary.liquefaction_energy_kwh:
-            # Total BAG CO2 from all Nelions this week (no filter)
+            # Total BAG CO2 from all Modules this week (no filter)
             all_cycles = get_filtered_cycles(session, start_dt, end_dt, None)
             total_bag_all = sum(safe_value(c.bag_co2_kg) for c in all_cycles)
             if total_bag_all > 0 and bag_co2 > 0:
@@ -289,7 +289,7 @@ def aggregate_cycles_by_pair(
     end_date: Optional[date] = None,
 ) -> dict:
     """
-    Aggregate cycle data by Nelion pair (1n3 vs 2n4).
+    Aggregate cycle data by Module pair (1n3 vs 2n4).
     
     Returns a dictionary with:
     - pair_data: dict keyed by pair name with aggregated metrics
@@ -336,7 +336,7 @@ def aggregate_cycles_by_pair(
     }
     
     for cycle in cycles:
-        pair = classify_nelion_pair(cycle.machine) or "unknown"
+        pair = classify_module_pair(cycle.machine) or "unknown"
         
         pair_data[pair]["cycles"] += 1
         pair_data[pair]["ads_co2_kg"] += safe_value(cycle.ads_co2_kg)

@@ -2,9 +2,9 @@
 import streamlit as st
 
 
-def render_nelion_filter() -> str:
+def render_module_filter() -> str:
     """
-    Render the Nelion pair filter in the sidebar and return the selected filter value.
+    Render the Module pair filter in the sidebar and return the selected filter value.
     
     Returns:
         str or None: "1n3", "2n4", or None for "all"
@@ -18,27 +18,27 @@ def render_nelion_filter() -> str:
     """, unsafe_allow_html=True)
     
     pair_options = {
-        "all": "All Nelions (Combined)",
-        "1n3": "Nelion 1 & 3 (Better Sorbent)",
-        "2n4": "Nelion 2 & 4",
+        "all": "All Modules (Combined)",
+        "1n3": "Module 1 & 3 (Better Sorbent)",
+        "2n4": "Module 2 & 4",
     }
     
     # Initialize session state if not exists
-    if "nelion_pair_filter" not in st.session_state:
-        st.session_state.nelion_pair_filter = "all"
+    if "module_pair_filter" not in st.session_state:
+        st.session_state.module_pair_filter = "all"
     
     selected_pair = st.sidebar.radio(
         "View data for:",
         options=list(pair_options.keys()),
         format_func=lambda x: pair_options[x],
-        key="nelion_pair_filter",
-        help="Filter all dashboard and report data by Nelion pair",
+        key="module_pair_filter",
+        help="Filter all dashboard and report data by Module pair",
         label_visibility="collapsed"
     )
     
     # Show filter indicator with custom styling
     if selected_pair != "all":
-        pair_name = "Nelion 1 & 3" if selected_pair == "1n3" else "Nelion 2 & 4"
+        pair_name = "Module 1 & 3" if selected_pair == "1n3" else "Module 2 & 4"
         st.sidebar.markdown(f"""
         <div style="
             background: #1A5F5F;
@@ -60,10 +60,10 @@ def render_nelion_filter() -> str:
 def get_filter_display_name(pair_filter: str, with_emoji: bool = False) -> str:
     """Get display name for the current filter."""
     if pair_filter == "1n3":
-        return "Nelion 1 & 3 (Better Sorbent)"
+        return "Module 1 & 3 (Better Sorbent)"
     elif pair_filter == "2n4":
-        return "Nelion 2 & 4"
-    return "All Nelions"
+        return "Module 2 & 4"
+    return "All Modules"
 
 
 def render_filter_indicator(pair_filter: str) -> None:

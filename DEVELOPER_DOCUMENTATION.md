@@ -85,7 +85,7 @@ Direct Air Capture is a technology that extracts CO₂ directly from ambient air
 | Plant Name | Project Hummingbird Phase 1 |
 | Location | Gilgil, Kenya |
 | Target Capacity | 100 tonnes CO₂/year |
-| Modules | 4 reactors (Nelion 1n3, 2n4) |
+| Modules | 4 reactors (Module 1n3, 2n4) |
 | Monoliths | 352 total (88 per module) |
 | Plant Lifetime | 10 years |
 | Sorbent Batch Life | 3 years |

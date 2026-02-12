@@ -10,7 +10,7 @@ import streamlit as st
 
 from app.auth.authentication import logout, require_login
 from app.components.branding import render_logo, get_brand_css, render_header_with_logo
-from app.components.sidebar import render_nelion_filter
+from app.components.sidebar import render_module_filter
 from app.database.connection import get_session, init_db
 from app.database.models import CycleData, WeeklySummary, EmbodiedInfrastructure, EmbodiedSorbent
 
@@ -41,8 +41,8 @@ def main() -> None:
         unsafe_allow_html=True
     )
     
-    # Render the Nelion pair filter (shared component)
-    render_nelion_filter()
+    # Render the Module pair filter (shared component)
+    render_module_filter()
     
     st.sidebar.markdown("---")
     
