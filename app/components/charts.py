@@ -10,7 +10,11 @@ COLORS = {
     "positive": "#22C55E",      # Bright green
     "negative": "#EF4444",      # Bright red
     "thermal": "#F97316",       # Bright orange
-    "auxiliary": "#06B6D4",     # Cyan
+    "auxiliary": "#06B6D4",     # Cyan (legacy)
+    "srv_lrvp": "#06B6D4",     # Cyan
+    "ct": "#0EA5E9",           # Sky blue
+    "fans": "#14B8A6",         # Teal
+    "liquefaction": "#6366F1",  # Indigo
     "embodied": "#A855F7",      # Purple
     "captured": "#22C55E",      # Green
     "emissions": "#EF4444",     # Red
@@ -181,27 +185,51 @@ def co2_flow_chart(df: pd.DataFrame) -> go.Figure:
 
 
 def emissions_breakdown_pie(df: pd.DataFrame) -> go.Figure:
-    """Pie chart of emissions by category."""
+    """Pie chart of emissions by category (thermal, non-thermal components, embodied)."""
     if df.empty:
         return None
     
     latest = df.iloc[-1]
     thermal = latest.get("thermal_emissions_kg", 0) or 0
-    auxiliary = latest.get("auxiliary_emissions_kg", 0) or 0
+    auxiliary_total = latest.get("auxiliary_emissions_kg", 0) or 0
     embodied = latest.get("total_embodied_emissions_kg", 0) or 0
     
-    total = thermal + auxiliary + embodied
+    # Split auxiliary emissions by component energy share
+    auxiliary_energy = latest.get("auxiliary_energy_kwh", 0) or 0
+    srv_kwh = latest.get("srv_lrvp_kwh", 0) or 0
+    ct_kwh = latest.get("ct_kwh", 0) or 0
+    fans_kwh = latest.get("fans_kwh", 0) or 0
+    liq_kwh = latest.get("liquefaction_energy_kwh", 0) or 0
+    
+    if auxiliary_energy > 0 and auxiliary_total > 0:
+        srv_em = auxiliary_total * (srv_kwh / auxiliary_energy)
+        ct_em = auxiliary_total * (ct_kwh / auxiliary_energy)
+        fans_em = auxiliary_total * (fans_kwh / auxiliary_energy)
+        liq_em = auxiliary_total * (liq_kwh / auxiliary_energy)
+    else:
+        srv_em = ct_em = fans_em = liq_em = 0
+    
+    labels = ["Thermal (Boiler)", "SRV/LRVP", "CT", "Fans", "Liquefaction", "Embodied"]
+    values = [thermal, srv_em, ct_em, fans_em, liq_em, embodied]
+    colors = [COLORS["thermal"], COLORS["srv_lrvp"], COLORS["ct"], COLORS["fans"], COLORS["liquefaction"], COLORS["embodied"]]
+    
+    # Filter out zero values for cleaner display
+    non_zero = [(l, v, c) for l, v, c in zip(labels, values, colors) if v > 0]
+    if not non_zero:
+        return None
+    labels, values, colors = zip(*non_zero)
+    
+    total = sum(values)
     if total == 0:
         return None
     
-    # Get week label for title
     week_label = latest.get("week_label", "Selected Week")
     
     fig = go.Figure(data=[go.Pie(
-        labels=["Thermal (Boiler)", "Auxiliary", "Embodied"],
-        values=[thermal, auxiliary, embodied],
+        labels=list(labels),
+        values=list(values),
         hole=0.45,
-        marker_colors=[COLORS["thermal"], COLORS["auxiliary"], COLORS["embodied"]],
+        marker_colors=list(colors),
         textinfo="percent",
         textposition="inside",
         textfont=dict(color="white", size=13, family="Inter, sans-serif"),
@@ -412,7 +440,7 @@ def cumulative_chart(df: pd.DataFrame) -> go.Figure:
 
 
 def energy_breakdown_chart(df: pd.DataFrame) -> go.Figure:
-    """Stacked bar showing thermal vs auxiliary energy."""
+    """Stacked bar showing thermal and non-thermal energy by component (SRV/LRVP, CT, Fans, Liquefaction)."""
     if df.empty:
         return None
     
@@ -425,22 +453,52 @@ def energy_breakdown_chart(df: pd.DataFrame) -> go.Figure:
         marker_color=COLORS["thermal"],
         marker_line_color="#1E293B",
         marker_line_width=1,
-        hovertemplate="<b>%{x}</b><br>Thermal: %{y:,.0f} kWh<extra></extra>",
+        hovertemplate="<b>%{x}</b><br>Thermal (Boiler): %{y:,.0f} kWh<extra></extra>",
     ))
     
     fig.add_trace(go.Bar(
-        name="Auxiliary",
+        name="SRV/LRVP",
         x=df["week_label"],
-        y=df.get("auxiliary_energy_kwh", [0] * len(df)),
-        marker_color=COLORS["auxiliary"],
+        y=df.get("srv_lrvp_kwh", [0] * len(df)),
+        marker_color=COLORS["srv_lrvp"],
         marker_line_color="#1E293B",
         marker_line_width=1,
-        hovertemplate="<b>%{x}</b><br>Auxiliary: %{y:,.0f} kWh<extra></extra>",
+        hovertemplate="<b>%{x}</b><br>SRV/LRVP: %{y:,.0f} kWh<extra></extra>",
+    ))
+    
+    fig.add_trace(go.Bar(
+        name="CT",
+        x=df["week_label"],
+        y=df.get("ct_kwh", [0] * len(df)),
+        marker_color=COLORS["ct"],
+        marker_line_color="#1E293B",
+        marker_line_width=1,
+        hovertemplate="<b>%{x}</b><br>CT: %{y:,.0f} kWh<extra></extra>",
+    ))
+    
+    fig.add_trace(go.Bar(
+        name="Fans",
+        x=df["week_label"],
+        y=df.get("fans_kwh", [0] * len(df)),
+        marker_color=COLORS["fans"],
+        marker_line_color="#1E293B",
+        marker_line_width=1,
+        hovertemplate="<b>%{x}</b><br>Fans: %{y:,.0f} kWh<extra></extra>",
+    ))
+    
+    fig.add_trace(go.Bar(
+        name="Liquefaction",
+        x=df["week_label"],
+        y=df.get("liquefaction_energy_kwh", [0] * len(df)),
+        marker_color=COLORS["liquefaction"],
+        marker_line_color="#1E293B",
+        marker_line_width=1,
+        hovertemplate="<b>%{x}</b><br>Liquefaction: %{y:,.0f} kWh<extra></extra>",
     ))
     
     apply_chart_layout(
         fig,
-        title="⚡ Energy Consumption by Type",
+        title="⚡ Energy Consumption by Component",
         height=380,
         xaxis_title="Week",
         yaxis_title="Energy (kWh)",

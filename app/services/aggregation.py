@@ -5,18 +5,13 @@ from typing import Optional, Tuple
 
 from sqlalchemy import and_
 
-from app.database.models import (
-    CycleData,
-    EmbodiedInfrastructure,
-    EmbodiedSorbent,
-    SystemConfig,
-    WeeklySummary,
-)
+from app.database.models import CycleData, SystemConfig, WeeklySummary
 from app.services.calculations import (
     calculate_weekly_metrics,
     classify_module_pair,
     safe_value,
 )
+from app.services.embodied_config import get_weekly_embodied_kg
 
 
 def get_week_dates(year: int, week_number: int) -> Tuple[date, date]:
@@ -64,18 +59,11 @@ def _get_config_value(session, key: str, default: float) -> float:
         return default
 
 
-def _get_weekly_embodied(session) -> Tuple[float, float]:
-    infra = (
-        session.query(EmbodiedInfrastructure).all()
-        if session.query(EmbodiedInfrastructure).count()
-        else []
-    )
-    sorbent = (
-        session.query(EmbodiedSorbent).filter(EmbodiedSorbent.is_active.is_(True)).all()
-    )
-    infra_weekly = sum(safe_value(item.weekly_charge_kg) for item in infra)
-    sorbent_weekly = sum(safe_value(item.weekly_charge_kg) for item in sorbent)
-    return infra_weekly, sorbent_weekly
+def _get_weekly_embodied(_session=None) -> Tuple[float, float]:
+    """Return (infra_weekly, sorbent_weekly) from fixed embodied formula.
+    Session arg kept for backwards compatibility but unused."""
+    total = get_weekly_embodied_kg()
+    return total, 0.0  # All embodied allocated to infra for compatibility
 
 
 def create_or_update_weekly_summary(
@@ -231,32 +219,33 @@ def get_weekly_metrics_by_pair(
     bag_co2 = sum(safe_value(c.bag_co2_kg) for c in cycles)
     boiler_kwh = sum(safe_value(c.boiler_kwh) for c in cycles)
 
-    # Base auxiliary energy from SCADA for this pair
-    auxiliary_kwh_base = sum(
-        safe_value(c.srv_lrvp_kwh)
-        + safe_value(c.ct_kwh)
-        + safe_value(c.nm1_fan_kwh)
+    # Breakdown of auxiliary energy by component
+    srv_lrvp_kwh = sum(safe_value(c.srv_lrvp_kwh) for c in cycles)
+    ct_kwh = sum(safe_value(c.ct_kwh) for c in cycles)
+    fans_kwh = sum(
+        safe_value(c.nm1_fan_kwh)
         + safe_value(c.nm2_fan_kwh)
         + safe_value(c.nm3_fan_kwh)
         + safe_value(c.nm4_fan_kwh)
         for c in cycles
     )
+    auxiliary_kwh_base = srv_lrvp_kwh + ct_kwh + fans_kwh
     total_kwh_base = sum(safe_value(c.total_kwh) for c in cycles)
     if total_kwh_base == 0:
         total_kwh_base = boiler_kwh + auxiliary_kwh_base
 
-    # Proportionally allocate plant-level liquefaction energy to this pair
+    # Proportionally allocate plant-level liquefaction energy to this pair (or full for unfiltered)
     liquefaction_energy_kwh = 0.0
-    if pair_filter:
-        weekly_summary = (
-            session.query(WeeklySummary)
-            .filter(
-                WeeklySummary.year == year,
-                WeeklySummary.week_number == week_number,
-            )
-            .first()
+    weekly_summary = (
+        session.query(WeeklySummary)
+        .filter(
+            WeeklySummary.year == year,
+            WeeklySummary.week_number == week_number,
         )
-        if weekly_summary and weekly_summary.liquefaction_energy_kwh:
+        .first()
+    )
+    if weekly_summary and weekly_summary.liquefaction_energy_kwh:
+        if pair_filter:
             # Total BAG CO2 from all Modules this week (no filter)
             all_cycles = get_filtered_cycles(session, start_dt, end_dt, None)
             total_bag_all = sum(safe_value(c.bag_co2_kg) for c in all_cycles)
@@ -265,6 +254,8 @@ def get_weekly_metrics_by_pair(
                 liquefaction_energy_kwh = safe_value(
                     weekly_summary.liquefaction_energy_kwh
                 ) * bag_ratio
+        else:
+            liquefaction_energy_kwh = safe_value(weekly_summary.liquefaction_energy_kwh)
 
     auxiliary_kwh = auxiliary_kwh_base + liquefaction_energy_kwh
     total_kwh = total_kwh_base + liquefaction_energy_kwh
@@ -280,6 +271,9 @@ def get_weekly_metrics_by_pair(
         "total_kwh": total_kwh,
         "steam_kg": steam_kg,
         "liquefaction_energy_kwh": liquefaction_energy_kwh,
+        "srv_lrvp_kwh": srv_lrvp_kwh,
+        "ct_kwh": ct_kwh,
+        "fans_kwh": fans_kwh,
     }
 
 

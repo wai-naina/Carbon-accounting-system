@@ -12,6 +12,13 @@ from app.auth.security import hash_password
 
 
 def get_engine():
+    database_url = os.getenv("DATABASE_URL")
+    if database_url:
+        # PostgreSQL (e.g. Neon) - ensure postgresql:// scheme for SQLAlchemy
+        if database_url.startswith("postgres://"):
+            database_url = database_url.replace("postgres://", "postgresql://", 1)
+        return create_engine(database_url, future=True)
+    # Fallback to SQLite for local development
     ensure_directories()
     config = load_config()
     db_path = config.db_path

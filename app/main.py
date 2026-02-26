@@ -12,7 +12,7 @@ from app.auth.authentication import logout, require_login
 from app.components.branding import render_logo, get_brand_css, render_header_with_logo
 from app.components.sidebar import render_module_filter
 from app.database.connection import get_session, init_db
-from app.database.models import CycleData, WeeklySummary, EmbodiedInfrastructure, EmbodiedSorbent
+from app.database.models import WeeklySummary
 
 
 def main() -> None:
@@ -56,10 +56,8 @@ def main() -> None:
     # Get summary stats
     session = get_session()
     try:
-        total_cycles = session.query(CycleData).count()
         total_weeks = session.query(WeeklySummary).count()
-        infra_items = session.query(EmbodiedInfrastructure).count()
-        sorbent_batches = session.query(EmbodiedSorbent).count()
+
         
         # Get latest summary (for context)
         latest = session.query(WeeklySummary).order_by(
@@ -256,23 +254,6 @@ def main() -> None:
         """, unsafe_allow_html=True)
 
     st.markdown("---")
-
-    # System Status
-    st.markdown('<div class="section-header">⚙️ System Status</div>', unsafe_allow_html=True)
-    
-    status_col1, status_col2, status_col3, status_col4 = st.columns(4)
-    
-    with status_col1:
-        st.metric("Cycles Imported", f"{total_cycles:,}")
-    with status_col2:
-        st.metric("Infrastructure Items", infra_items)
-    with status_col3:
-        st.metric("Sorbent Batches", sorbent_batches)
-    with status_col4:
-        if infra_items == 0 and sorbent_batches == 0:
-            st.warning("⚠️ No LCA data")
-        else:
-            st.success("✅ LCA configured")
 
 
 if __name__ == "__main__":

@@ -219,7 +219,7 @@ def main() -> None:
             st.markdown("**Current Operations (Grid)**")
             thermal_kwh = st.number_input("Boiler Energy (kWh)", min_value=0.0, value=3540.0, step=100.0,
                                           help="Electricity used by boiler to generate steam")
-            auxiliary_kwh = st.number_input("Auxiliary Energy (kWh)", min_value=0.0, value=1460.0, step=100.0,
+            auxiliary_kwh = st.number_input("Electrical Energy (kWh)", min_value=0.0, value=1460.0, step=100.0,
                                             help="Fans, pumps, compressors, etc.")
             steam_kg = st.number_input("Steam Used (kg)", min_value=0.0, value=5000.0, step=100.0,
                                        help="From SCADA - this will be used for geothermal calculation")
@@ -325,16 +325,16 @@ def main() -> None:
             # Comparison chart
             fig = go.Figure()
             
-            categories = ["Thermal", "Auxiliary", "Embodied", "Total"]
+            categories = ["Thermal", "Electrical", "Embodied", "Total"]
             current_vals = [
                 results["current"]["thermal_emissions"],
-                results["current"]["auxiliary_emissions"],
+                results["current"]["electrical_emissions"],
                 embodied_kg,
                 results["current"]["total_emissions"],
             ]
             geo_vals = [
                 results["geothermal"]["thermal_emissions"],
-                results["geothermal"]["auxiliary_emissions"],
+                results["geothermal"]["electrical_emissions"],
                 embodied_kg,
                 results["geothermal"]["total_emissions"],
             ]
@@ -478,8 +478,8 @@ def main() -> None:
             st.markdown("**Current Operations (Grid)**")
             thermal_min = st.number_input("Min Boiler kWh", value=2500.0, step=100.0)
             thermal_max = st.number_input("Max Boiler kWh", value=4500.0, step=100.0)
-            aux_min = st.number_input("Min Auxiliary kWh", value=1000.0, step=100.0)
-            aux_max = st.number_input("Max Auxiliary kWh", value=2000.0, step=100.0)
+            aux_min = st.number_input("Min Electrical kWh", value=1000.0, step=100.0)
+            aux_max = st.number_input("Max Electrical kWh", value=2000.0, step=100.0)
         
         with param_col2:
             st.markdown("**Steam (for Geothermal)**")

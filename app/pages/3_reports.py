@@ -39,6 +39,10 @@ def load_summary_data(session, pair_filter: str = None) -> pd.DataFrame:
             total_cycles = pair_metrics["cycles"]
             thermal_energy = pair_metrics["boiler_kwh"]
             auxiliary_energy = pair_metrics["auxiliary_kwh"]
+            srv_lrvp_kwh = pair_metrics.get("srv_lrvp_kwh", 0)
+            ct_kwh = pair_metrics.get("ct_kwh", 0)
+            fans_kwh = pair_metrics.get("fans_kwh", 0)
+            liquefaction_kwh = pair_metrics.get("liquefaction_energy_kwh", 0)
             
             # Skip weeks with no data for this pair
             if total_cycles == 0:
@@ -52,6 +56,12 @@ def load_summary_data(session, pair_filter: str = None) -> pd.DataFrame:
             else:
                 liq = 0
         else:
+            pair_metrics = get_weekly_metrics_by_pair(session, w.year, w.week_number, None)
+            srv_lrvp_kwh = pair_metrics.get("srv_lrvp_kwh", 0)
+            ct_kwh = pair_metrics.get("ct_kwh", 0)
+            fans_kwh = pair_metrics.get("fans_kwh", 0)
+            liquefaction_kwh = pair_metrics.get("liquefaction_energy_kwh", 0)
+            
             liq = w.liquefied_co2_kg or 0
             bag = w.total_bag_co2_kg or 0
             ads = w.total_ads_co2_kg or 0
@@ -114,6 +124,16 @@ def load_summary_data(session, pair_filter: str = None) -> pd.DataFrame:
         total_emissions = operational_emissions + embodied
         net_removal = collected_co2 - total_emissions
         
+        # Component emissions (proportional to energy share of auxiliary)
+        aux_em = auxiliary_emissions
+        if auxiliary_energy > 0 and aux_em > 0:
+            srv_em = aux_em * (srv_lrvp_kwh / auxiliary_energy)
+            ct_em = aux_em * (ct_kwh / auxiliary_energy)
+            fans_em = aux_em * (fans_kwh / auxiliary_energy)
+            liq_em = aux_em * (liquefaction_kwh / auxiliary_energy)
+        else:
+            srv_em = ct_em = fans_em = liq_em = 0
+
         rows.append({
             "Year": w.year,
             "Week": w.week_number,
@@ -130,10 +150,18 @@ def load_summary_data(session, pair_filter: str = None) -> pd.DataFrame:
             "Stage 3 Loss (kg)": loss_stage_3,
             "Total Loss (kg)": total_loss,
             "Thermal Energy (kWh)": thermal_energy,
-            "Auxiliary Energy (kWh)": auxiliary_energy,
+            "SRV/LRVP (kWh)": srv_lrvp_kwh,
+            "CT (kWh)": ct_kwh,
+            "Fans (kWh)": fans_kwh,
+            "Liquefaction (kWh)": liquefaction_kwh,
+            "Non-thermal Energy (kWh)": auxiliary_energy,
             "Total Energy (kWh)": total_energy,
             "Thermal Emissions (kg)": thermal_emissions,
-            "Auxiliary Emissions (kg)": auxiliary_emissions,
+            "SRV/LRVP Emissions (kg)": srv_em,
+            "CT Emissions (kg)": ct_em,
+            "Fans Emissions (kg)": fans_em,
+            "Liquefaction Emissions (kg)": liq_em,
+            "Non-thermal Emissions (kg)": auxiliary_emissions,
             "Operational Emissions (kg)": operational_emissions,
             "Infrastructure Embodied (kg)": infra_embodied,
             "Sorbent Embodied (kg)": sorbent_embodied,
@@ -374,7 +402,7 @@ def main() -> None:
 
     with report_tab3:
         st.markdown("### 🔬 Module Pair Performance Analysis")
-        st.markdown("Compare performance between Module pairs 1&3 (better sorbent) vs 2&4")
+        st.markdown("Compare performance between Module pairs 1&3 vs 2&4")
         
         # Get pair analysis
         session = get_session()
@@ -614,8 +642,12 @@ def main() -> None:
         
         # Energy totals
         total_thermal = summary_df["Thermal Energy (kWh)"].sum()
-        total_aux = summary_df["Auxiliary Energy (kWh)"].sum()
+        total_aux = summary_df["Non-thermal Energy (kWh)"].sum()
         total_energy = summary_df["Total Energy (kWh)"].sum()
+        total_srv = summary_df["SRV/LRVP (kWh)"].sum()
+        total_ct = summary_df["CT (kWh)"].sum()
+        total_fans = summary_df["Fans (kWh)"].sum()
+        total_liq = summary_df["Liquefaction (kWh)"].sum()
         
         energy_col1, energy_col2, energy_col3 = st.columns(3)
         
@@ -624,9 +656,21 @@ def main() -> None:
             st.metric("Total Thermal Energy", f"{total_thermal:,.0f} kWh", f"{thermal_pct:.1f}% of total")
         with energy_col2:
             aux_pct = (total_aux / total_energy * 100) if total_energy > 0 else 0
-            st.metric("Total Auxiliary Energy", f"{total_aux:,.0f} kWh", f"{aux_pct:.1f}% of total")
+            st.metric("Total Non-thermal Energy", f"{total_aux:,.0f} kWh", f"{aux_pct:.1f}% of total")
         with energy_col3:
             st.metric("Total Energy", f"{total_energy:,.0f} kWh")
+        
+        # Non-thermal breakdown
+        with st.expander("📋 Non-thermal energy breakdown (SRV/LRVP, CT, Fans, Liquefaction)"):
+            nc1, nc2, nc3, nc4 = st.columns(4)
+            with nc1:
+                st.metric("SRV/LRVP", f"{total_srv:,.0f} kWh", f"{total_srv/total_aux*100:.1f}%" if total_aux > 0 else "-")
+            with nc2:
+                st.metric("CT", f"{total_ct:,.0f} kWh", f"{total_ct/total_aux*100:.1f}%" if total_aux > 0 else "-")
+            with nc3:
+                st.metric("Fans", f"{total_fans:,.0f} kWh", f"{total_fans/total_aux*100:.1f}%" if total_aux > 0 else "-")
+            with nc4:
+                st.metric("Liquefaction", f"{total_liq:,.0f} kWh", f"{total_liq/total_aux*100:.1f}%" if total_aux > 0 else "-")
         
         # Energy breakdown chart
         fig = go.Figure()
@@ -639,10 +683,31 @@ def main() -> None:
         ))
         
         fig.add_trace(go.Bar(
-            name="Auxiliary",
+            name="SRV/LRVP",
             x=summary_df["Week Label"].tail(12),
-            y=summary_df["Auxiliary Energy (kWh)"].tail(12),
-            marker_color="#17A2B8",
+            y=summary_df["SRV/LRVP (kWh)"].tail(12),
+            marker_color="#06B6D4",
+        ))
+        
+        fig.add_trace(go.Bar(
+            name="CT",
+            x=summary_df["Week Label"].tail(12),
+            y=summary_df["CT (kWh)"].tail(12),
+            marker_color="#0EA5E9",
+        ))
+        
+        fig.add_trace(go.Bar(
+            name="Fans",
+            x=summary_df["Week Label"].tail(12),
+            y=summary_df["Fans (kWh)"].tail(12),
+            marker_color="#14B8A6",
+        ))
+        
+        fig.add_trace(go.Bar(
+            name="Liquefaction",
+            x=summary_df["Week Label"].tail(12),
+            y=summary_df["Liquefaction (kWh)"].tail(12),
+            marker_color="#6366F1",
         ))
         
         fig.update_layout(

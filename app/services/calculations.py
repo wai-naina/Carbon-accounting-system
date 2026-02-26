@@ -39,7 +39,7 @@ def classify_module_pair(machine: str) -> Optional[str]:
 def get_pair_display_name(pair: str) -> str:
     """Get display name for a Module pair."""
     if pair == "1n3":
-        return "Module 1&3 (Better Sorbent)"
+        return "Module 1&3"
     elif pair == "2n4":
         return "Module 2&4"
     return pair

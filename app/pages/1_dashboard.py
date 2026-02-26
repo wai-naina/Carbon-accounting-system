@@ -42,6 +42,10 @@ def load_weekly_df(session, pair_filter: str = None) -> pd.DataFrame:
             total_cycles = pair_metrics["cycles"]
             thermal_energy = pair_metrics["boiler_kwh"]
             auxiliary_energy = pair_metrics["auxiliary_kwh"]
+            srv_lrvp_kwh = pair_metrics.get("srv_lrvp_kwh", 0)
+            ct_kwh = pair_metrics.get("ct_kwh", 0)
+            fans_kwh = pair_metrics.get("fans_kwh", 0)
+            liquefaction_kwh = pair_metrics.get("liquefaction_energy_kwh", 0)
             
             # Skip weeks with no data for this pair
             if total_cycles == 0:
@@ -56,7 +60,13 @@ def load_weekly_df(session, pair_filter: str = None) -> pd.DataFrame:
             else:
                 liq = 0
         else:
-            # Use stored values
+            # Use stored values and get energy breakdown from cycles
+            pair_metrics = get_weekly_metrics_by_pair(session, w.year, w.week_number, None)
+            srv_lrvp_kwh = pair_metrics.get("srv_lrvp_kwh", 0)
+            ct_kwh = pair_metrics.get("ct_kwh", 0)
+            fans_kwh = pair_metrics.get("fans_kwh", 0)
+            liquefaction_kwh = pair_metrics.get("liquefaction_energy_kwh", 0)
+            
             liq = w.liquefied_co2_kg or 0
             bag = w.total_bag_co2_kg or 0
             ads = w.total_ads_co2_kg or 0
@@ -148,6 +158,10 @@ def load_weekly_df(session, pair_filter: str = None) -> pd.DataFrame:
             "total_loss_kg": total_loss,
             "thermal_energy_kwh": thermal_energy,
             "auxiliary_energy_kwh": auxiliary_energy,
+            "srv_lrvp_kwh": srv_lrvp_kwh,
+            "ct_kwh": ct_kwh,
+            "fans_kwh": fans_kwh,
+            "liquefaction_energy_kwh": liquefaction_kwh,
             "total_energy_kwh": total_energy,
             "is_net_positive": net_removal > 0,
         })
@@ -192,8 +206,7 @@ def main() -> None:
         2. Enter the weekly liquefied CO₂ amount
         3. Click "Save & Calculate Weekly Summary"
         
-        **Optional but recommended:**
-        - Go to **⚙️ Configuration** and import LCA embodied emissions data
+        Embodied emissions are calculated using a fixed formula (see **⚙️ Configuration**).
         """)
         return
 

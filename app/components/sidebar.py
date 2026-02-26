@@ -19,7 +19,7 @@ def render_module_filter() -> str:
     
     pair_options = {
         "all": "All Modules (Combined)",
-        "1n3": "Module 1 & 3 (Better Sorbent)",
+        "1n3": "Module 1 & 3",
         "2n4": "Module 2 & 4",
     }
     
@@ -60,7 +60,7 @@ def render_module_filter() -> str:
 def get_filter_display_name(pair_filter: str, with_emoji: bool = False) -> str:
     """Get display name for the current filter."""
     if pair_filter == "1n3":
-        return "Module 1 & 3 (Better Sorbent)"
+        return "Module 1 & 3"
     elif pair_filter == "2n4":
         return "Module 2 & 4"
     return "All Modules"
