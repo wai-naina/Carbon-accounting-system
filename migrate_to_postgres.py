@@ -2,13 +2,14 @@
 Migrate SQLite data to PostgreSQL (Neon).
 Run with: DATABASE_URL=... python migrate_to_postgres.py
 
+Options:
+  --truncate    Truncate all tables in PostgreSQL before migrating (recommended
+                if target already has data from init_db or previous runs)
+
 Handles schema differences by only inserting columns that exist in the target
 PostgreSQL schema (e.g. when SQLite has older/different columns).
-
-If PostgreSQL already has data, run this first in Neon SQL Editor:
-  TRUNCATE users, weekly_summary, cycle_data, embodied_infrastructure,
-  embodied_sorbent, system_config, audit_log CASCADE;
 """
+import argparse
 import os
 import sys
 from pathlib import Path
@@ -23,6 +24,19 @@ from sqlalchemy import create_engine, inspect, text
 from app.database.models import Base
 from app.config import load_config
 
+# Chunk size for bulk inserts (avoids psycopg2 parameter limit with large tables)
+CHUNK_SIZE = 100
+
+TABLES = [
+    "users",
+    "weekly_summary",
+    "cycle_data",
+    "embodied_infrastructure",
+    "embodied_sorbent",
+    "system_config",
+    "audit_log",
+]
+
 
 def get_pg_columns(engine, table: str) -> set:
     """Get column names that exist in the target PostgreSQL table."""
@@ -31,6 +45,14 @@ def get_pg_columns(engine, table: str) -> set:
 
 
 def main():
+    parser = argparse.ArgumentParser(description="Migrate SQLite data to PostgreSQL (Neon)")
+    parser.add_argument(
+        "--truncate",
+        action="store_true",
+        help="Truncate all tables in PostgreSQL before migrating (use when target has existing data)",
+    )
+    args = parser.parse_args()
+
     # 1. SQLite source
     config = load_config()
     db_path = config.db_path
@@ -57,18 +79,16 @@ def main():
     print("Creating tables in PostgreSQL...")
     Base.metadata.create_all(bind=pg_engine)
 
-    # 4. Migrate data (order respects foreign keys)
-    tables = [
-        "users",
-        "weekly_summary",
-        "cycle_data",
-        "embodied_infrastructure",
-        "embodied_sorbent",
-        "system_config",
-        "audit_log",
-    ]
+    # 3b. Truncate if requested (ensures clean slate, avoids duplicate key errors)
+    if args.truncate:
+        print("Truncating existing data in PostgreSQL...")
+        with pg_engine.connect() as conn:
+            conn.execute(text("TRUNCATE users, weekly_summary, cycle_data, embodied_infrastructure, embodied_sorbent, system_config, audit_log CASCADE"))
+            conn.commit()
+        print("  Done.")
 
-    for table in tables:
+    # 4. Migrate data (order respects foreign keys)
+    for table in TABLES:
         try:
             df = pd.read_sql_table(table, sqlite_engine)
             if len(df) == 0:
@@ -85,7 +105,12 @@ def main():
             df_trimmed = df[cols_to_use]
 
             df_trimmed.to_sql(
-                table, pg_engine, if_exists="append", index=False, method="multi"
+                table,
+                pg_engine,
+                if_exists="append",
+                index=False,
+                method="multi",
+                chunksize=CHUNK_SIZE,
             )
             print(f"  {table}: {len(df_trimmed)} rows migrated")
         except Exception as e:
