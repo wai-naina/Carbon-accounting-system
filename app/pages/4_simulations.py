@@ -1042,7 +1042,7 @@ def main() -> None:
             st.plotly_chart(fig_weekly, width="stretch")
 
             # Status message
-            design_weekly_kg = (100 * 1000) / 52  # 100 t/yr design capacity
+            design_weekly_kg = (25 * 1000) / 52  # 25 t/yr design capacity
             if avg_weekly <= 0:
                 st.error(
                     "Current operations are net emitting on average. "
@@ -1051,7 +1051,7 @@ def main() -> None:
                 max_ops_budget = max(design_weekly_kg - get_weekly_embodied_kg() - SORBENT_RATE * design_weekly_kg, 0)
                 max_grid_be = max_ops_budget / (grid_ef * design_weekly_kg) if design_weekly_kg > 0 else 0
                 st.markdown(f"""
-                **To become net positive**, total weekly emissions must be below **{design_weekly_kg:.0f} kg** at design capture (100 t/yr).
+                **To become net positive**, total weekly emissions must be below **{design_weekly_kg:.0f} kg** at design capture (25 t/yr).
 
                 | Source | Weekly kg | Notes |
                 |---|---|---|
