@@ -17,6 +17,7 @@ from app.components.sidebar import render_module_filter, get_filter_display_name
 from app.database.connection import get_session, init_db
 from app.database.models import WeeklySummary, CycleData
 from app.services.aggregation import aggregate_cycles_by_pair, get_weekly_metrics_by_pair
+from app.services.embodied_config import get_weekly_embodied_kg
 from app.services.calculations import classify_module_pair
 
 
@@ -95,21 +96,16 @@ def load_summary_data(session, pair_filter: str = None) -> pd.DataFrame:
         loss_stage_3 = (bag - liq) if liq > 0 else 0
         total_loss = ads - collected_co2
         
-        # Proportional embodied emissions
-        if pair_filter and (w.total_cycles or 0) > 0:
-            proportion = total_cycles / w.total_cycles
-            embodied = (w.total_embodied_emissions_kg or 0) * proportion
-            infra_embodied = (w.infrastructure_embodied_kg or 0) * proportion
-            sorbent_embodied = (w.sorbent_embodied_kg or 0) * proportion
-        else:
-            embodied = w.total_embodied_emissions_kg or 0
-            infra_embodied = w.infrastructure_embodied_kg or 0
-            sorbent_embodied = w.sorbent_embodied_kg or 0
+        # Embodied emissions are a fixed weekly infrastructure cost from the LCA.
+        # When viewing a single module pair, split equally — both pairs share the same infrastructure.
+        embodied = get_weekly_embodied_kg() / 2 if pair_filter else get_weekly_embodied_kg()
+        infra_embodied = embodied  # All embodied allocated to infrastructure
+        sorbent_embodied = 0.0
         
         # Calculate emissions
         # Base total operational emissions on TOTAL energy, then split between
         # thermal and auxiliary so their sum matches the operational total.
-        grid_ef = 0.049
+        grid_ef = 0.055  # Kenya grid: 0.055 tCO₂/MWh
         operational_emissions = total_energy * grid_ef
 
         if total_energy > 0:
