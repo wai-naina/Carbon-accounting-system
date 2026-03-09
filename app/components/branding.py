@@ -122,6 +122,13 @@ def get_brand_css() -> str:
     [data-testid="stToolbar"] {visibility: hidden;}
     [data-testid="stDecoration"] {display: none;}
     [data-testid="stDeployButton"] {display: none;}
+    [data-testid="stStatusWidget"] {display: none !important;}
+    [data-testid="manage-app-button"] {display: none !important;}
+    .viewerBadge_container__r5tak {display: none !important;}
+    .viewerBadge_link__qRIco {display: none !important;}
+    #stDecoration {display: none !important;}
+    a[href="https://streamlit.io/cloud"] {display: none !important;}
+    div[class*="viewerBadge"] {display: none !important;}
     
     /* Custom scrollbar - Dark theme */
     ::-webkit-scrollbar {
