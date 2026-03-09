@@ -118,6 +118,10 @@ def get_brand_css() -> str:
     /* Hide default Streamlit branding */
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
+    header {visibility: hidden;}
+    [data-testid="stToolbar"] {visibility: hidden;}
+    [data-testid="stDecoration"] {display: none;}
+    [data-testid="stDeployButton"] {display: none;}
     
     /* Custom scrollbar - Dark theme */
     ::-webkit-scrollbar {
