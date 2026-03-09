@@ -94,7 +94,13 @@ def _seed_admin_user() -> None:
         if session.query(User).filter(User.role == "admin").first():
             return
         username = os.getenv("CAS_ADMIN_USERNAME", "admin")
-        password = os.getenv("CAS_ADMIN_PASSWORD", "admin123")
+        password = os.getenv("CAS_ADMIN_PASSWORD")
+        if not password:
+            if os.getenv("DATABASE_URL"):
+                raise ValueError(
+                    "CAS_ADMIN_PASSWORD environment variable must be set for production deployments"
+                )
+            password = "admin123"  # local SQLite dev only — change via admin UI after first login
         email = os.getenv("CAS_ADMIN_EMAIL", "admin@octavia.local")
         session.add(
             User(

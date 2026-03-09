@@ -58,3 +58,11 @@ Thumbs.db
 # Temporary files
 *.tmp
 *.bak
+# Node
+node_modules/
+
+# Migration artifacts
+migration_log.txt
+
+#Vercel
+.vercel/
