@@ -16,10 +16,10 @@ Ramp-up phase adjustment (current):
   design capacity. Only 35% of total lifetime embodied emissions are
   allocated to this phase, amortized over 5 years.
 
-  - Ramp-up fraction:               35%
-  - Ramp-up embodied total:         67,267.5 × 0.35 = 23,543.6 kgCO₂eq
+  - Ramp-up fraction:               26%
+  - Ramp-up embodied total:         67,267.5 × 0.26 = 17,489.6 kgCO₂eq
   - Ramp-up period:                 5 years = 260 weeks
-  - Weekly ramp-up value:           23,543.6 / 260 = 90.55 kg CO₂eq/week
+  - Weekly ramp-up value:           17,489.6 / 260 = 67.27 kg CO₂eq/week
 
   (Full-scale reference: 67,267.5 / 520 = 129.36 kg CO₂eq/week)
 """
@@ -29,7 +29,7 @@ PLANT_LIFETIME_YEARS = 10
 WEEKS_IN_PLANT_LIFETIME = 520           # 10 years × 52 weeks
 
 # Ramp-up phase parameters
-RAMP_UP_FRACTION = 0.35                 # 35% of total embodied allocated to ramp-up phase
+RAMP_UP_FRACTION = 0.26                 # 26% of total embodied allocated to ramp-up phase
 RAMP_UP_YEARS = 5
 RAMP_UP_WEEKS = RAMP_UP_YEARS * 52     # 260 weeks
 RAMP_UP_EMBODIED_KG = TOTAL_LIFETIME_EMBODIED_KG * RAMP_UP_FRACTION  # 23,543.6 kg
@@ -38,8 +38,8 @@ RAMP_UP_EMBODIED_KG = TOTAL_LIFETIME_EMBODIED_KG * RAMP_UP_FRACTION  # 23,543.6 
 def get_weekly_embodied_kg() -> float:
     """Return the fixed amortized weekly embodied emissions (kg CO2eq).
 
-    Currently reflects the ramp-up phase: 35% of total lifetime embodied
-    emissions spread over 5 years (260 weeks) = 90.55 kg/week.
+    Currently reflects the ramp-up phase: 26% of total lifetime embodied
+    emissions spread over 5 years (260 weeks) = 67.27 kg/week.
 
     This value is constant — it does not vary with actual output,
     captured CO2, or number of cycles in a given week.

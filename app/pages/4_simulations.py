@@ -671,7 +671,7 @@ def main() -> None:
         s23_elec_kwh_week = s23_elec_mwh_t * 1000 * weekly_target_t
         steam_kg_week     = steam_kg_per_kgco2 * weekly_target_kg
 
-        embodied_weekly = get_weekly_embodied_kg()           # 90.55 kg/week (ramp-up phase: 35% over 5 yrs)
+        embodied_weekly = get_weekly_embodied_kg()           # 67.27 kg/week (ramp-up phase: 26% over 5 yrs)
         sorbent_weekly  = SORBENT_RATE * weekly_target_kg    # 0.1522 × captured kg
         ops_budget      = weekly_target_kg - embodied_weekly - sorbent_weekly
 
