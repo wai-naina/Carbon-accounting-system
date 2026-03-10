@@ -1,7 +1,7 @@
 """
 Hard-coded embodied emissions configuration.
 
-Embodied emissions are amortized over the plant lifetime using a fixed
+Embodied emissions are amortized over a ramp-up phase using a fixed
 weekly value, independent of actual output or captured CO2.
 
 Source: Carbon Nest LCA Workbook (IPCC 2021 GWP100)
@@ -10,23 +10,41 @@ Source: Carbon Nest LCA Workbook (IPCC 2021 GWP100)
                                     mild steel, equipment, land use)
   - Lifetime capture (design):      250,000 kg CO₂ (25 t/yr × 10 yr)
   - Plant lifetime:                 10 years
-  - Weeks in plant lifetime:        520
 
-  Weekly fixed value: 67,267.5 / 520 = 129.36 kg CO₂eq/week
+Ramp-up phase adjustment (current):
+  The plant is in an early ramp-up phase and is not yet operating at full
+  design capacity. Only 35% of total lifetime embodied emissions are
+  allocated to this phase, amortized over 5 years.
+
+  - Ramp-up fraction:               35%
+  - Ramp-up embodied total:         67,267.5 × 0.35 = 23,543.6 kgCO₂eq
+  - Ramp-up period:                 5 years = 260 weeks
+  - Weekly ramp-up value:           23,543.6 / 260 = 90.55 kg CO₂eq/week
+
+  (Full-scale reference: 67,267.5 / 520 = 129.36 kg CO₂eq/week)
 """
 
-TOTAL_LIFETIME_EMBODIED_KG = 67_267.5  # kgCO₂eq — from LCA (67.2675 tonnes, facility construction only)
+TOTAL_LIFETIME_EMBODIED_KG = 67_267.5   # kgCO₂eq — from LCA (67.2675 tonnes, facility construction only)
 PLANT_LIFETIME_YEARS = 10
-WEEKS_IN_PLANT_LIFETIME = 520  # 10 years × 52 weeks
+WEEKS_IN_PLANT_LIFETIME = 520           # 10 years × 52 weeks
+
+# Ramp-up phase parameters
+RAMP_UP_FRACTION = 0.35                 # 35% of total embodied allocated to ramp-up phase
+RAMP_UP_YEARS = 5
+RAMP_UP_WEEKS = RAMP_UP_YEARS * 52     # 260 weeks
+RAMP_UP_EMBODIED_KG = TOTAL_LIFETIME_EMBODIED_KG * RAMP_UP_FRACTION  # 23,543.6 kg
 
 
 def get_weekly_embodied_kg() -> float:
     """Return the fixed amortized weekly embodied emissions (kg CO2eq).
 
+    Currently reflects the ramp-up phase: 35% of total lifetime embodied
+    emissions spread over 5 years (260 weeks) = 90.55 kg/week.
+
     This value is constant — it does not vary with actual output,
     captured CO2, or number of cycles in a given week.
     """
-    return TOTAL_LIFETIME_EMBODIED_KG / WEEKS_IN_PLANT_LIFETIME if WEEKS_IN_PLANT_LIFETIME > 0 else 0.0
+    return RAMP_UP_EMBODIED_KG / RAMP_UP_WEEKS if RAMP_UP_WEEKS > 0 else 0.0
 
 
 # ── Sorbent degradation emission rates (operational, not embodied) ────────────
