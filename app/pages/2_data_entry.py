@@ -550,6 +550,7 @@ def main() -> None:
                                 if st.button("🗑️ Delete", key=f"del_{week.id}", type="secondary"):
                                     del_session = get_session()
                                     try:
+                                        del_session.query(CycleData).filter(CycleData.weekly_summary_id == week.id).delete()
                                         del_session.query(WeeklySummary).filter(WeeklySummary.id == week.id).delete()
                                         del_session.commit()
                                         st.success(f"Deleted {week.year}-W{week.week_number}")
@@ -565,6 +566,7 @@ def main() -> None:
                         del_session = get_session()
                         try:
                             count = del_session.query(WeeklySummary).count()
+                            del_session.query(CycleData).delete()
                             del_session.query(WeeklySummary).delete()
                             del_session.commit()
                             st.success(f"Deleted {count} weekly summaries")
