@@ -87,8 +87,8 @@ def load_summary_data(session, pair_filter: str = None) -> pd.DataFrame:
         # Collected CO2 = liquefied if available, otherwise bag
         collected_co2 = liq if liq > 0 else bag
         
-        # Calculate energy intensity: total energy / collected CO2
-        energy_intensity = (total_energy / (collected_co2 / 1000)) if (collected_co2 > 0 and total_energy > 0) else 0
+        # Calculate energy intensity: total energy / collected CO2, in MWh/tCO₂
+        energy_intensity = (total_energy / (collected_co2 / 1000) / 1000) if (collected_co2 > 0 and total_energy > 0) else 0
         
         # Recalculate losses correctly:
         loss_stage_1 = ads - des
@@ -130,6 +130,11 @@ def load_summary_data(session, pair_filter: str = None) -> pd.DataFrame:
         else:
             srv_em = ct_em = fans_em = liq_em = 0
 
+        # Energy intensity per component (MWh per tonne CO₂ captured)
+        co2_tonnes = collected_co2 / 1000 if collected_co2 > 0 else None
+        def intensity(kwh):
+            return round(kwh / co2_tonnes / 1000, 3) if co2_tonnes else 0
+
         rows.append({
             "Year": w.year,
             "Week": w.week_number,
@@ -152,6 +157,11 @@ def load_summary_data(session, pair_filter: str = None) -> pd.DataFrame:
             "Liquefaction (kWh)": liquefaction_kwh,
             "Non-thermal Energy (kWh)": auxiliary_energy,
             "Total Energy (kWh)": total_energy,
+            "Thermal Intensity (MWh/tCO₂)": intensity(thermal_energy),
+            "SRV/LRVP Intensity (MWh/tCO₂)": intensity(srv_lrvp_kwh),
+            "CT Intensity (MWh/tCO₂)": intensity(ct_kwh),
+            "Fans Intensity (MWh/tCO₂)": intensity(fans_kwh),
+            "Liquefaction Intensity (MWh/tCO₂)": intensity(liquefaction_kwh),
             "Thermal Emissions (kg)": thermal_emissions,
             "SRV/LRVP Emissions (kg)": srv_em,
             "CT Emissions (kg)": ct_em,
@@ -164,7 +174,7 @@ def load_summary_data(session, pair_filter: str = None) -> pd.DataFrame:
             "Total Embodied (kg)": embodied,
             "Total Emissions (kg)": total_emissions,
             "Net Removal (kg)": net_removal,
-            "Energy Intensity (kWh/tCO₂)": energy_intensity,
+            "Energy Intensity (MWh/tCO₂)": energy_intensity,
             "Cycles": total_cycles,
             "Net Positive": "Yes" if net_removal > 0 else "No",
             "Notes": w.notes or "",
@@ -256,8 +266,8 @@ def main() -> None:
     with stat_col4:
         st.metric("Weeks Net Positive", f"{weeks_positive}/{total_weeks}", f"{weeks_positive/total_weeks*100:.0f}%")
     with stat_col5:
-        avg_intensity = summary_df["Energy Intensity (kWh/tCO₂)"].mean()
-        st.metric("Avg Energy Intensity", f"{avg_intensity:,.0f} kWh/t")
+        avg_intensity = summary_df["Energy Intensity (MWh/tCO₂)"].mean()
+        st.metric("Avg Energy Intensity", f"{avg_intensity:,.2f} MWh/t")
 
     st.divider()
 
@@ -724,7 +734,7 @@ def main() -> None:
         
         fig2.add_trace(go.Scatter(
             x=summary_df["Week Label"].tail(12),
-            y=summary_df["Energy Intensity (kWh/tCO₂)"].tail(12),
+            y=summary_df["Energy Intensity (MWh/tCO₂)"].tail(12),
             mode="lines+markers",
             name="Energy Intensity",
             line=dict(color="#6F42C1", width=3),
@@ -733,15 +743,121 @@ def main() -> None:
         
         fig2.update_layout(
             title="Energy Intensity Trend (Last 12 Weeks)",
-            yaxis_title="kWh per tonne CO₂",
+            yaxis_title="MWh per tonne CO₂",
             template="plotly_dark",
             paper_bgcolor="rgba(0,0,0,0)",
             plot_bgcolor="rgba(0,0,0,0)",
             font=dict(color="#f8fafc"),
             height=350,
         )
-        
+
         st.plotly_chart(fig2, width="stretch")
+
+        # ── Energy Intensity Breakdown by Component ───────────────────────────
+        st.divider()
+        st.markdown("#### Energy Intensity by Component (MWh / tonne CO₂)")
+        st.caption(
+            "Shows how much energy each consumer costs per tonne of CO₂ captured each week. "
+            "Stacked total equals the overall energy intensity."
+        )
+
+        intensity_cols = {
+            "Thermal (Boiler)": "Thermal Intensity (MWh/tCO₂)",
+            "SRV/LRVP":         "SRV/LRVP Intensity (MWh/tCO₂)",
+            "CT":               "CT Intensity (MWh/tCO₂)",
+            "Fans":             "Fans Intensity (MWh/tCO₂)",
+            "Liquefaction":     "Liquefaction Intensity (MWh/tCO₂)",
+        }
+        component_colors = {
+            "Thermal (Boiler)": "#FD7E14",
+            "SRV/LRVP":         "#06B6D4",
+            "CT":               "#0EA5E9",
+            "Fans":             "#14B8A6",
+            "Liquefaction":     "#6366F1",
+        }
+
+        plot_df = summary_df.tail(12)
+
+        # Stacked bar chart — each week, each component's kWh/tonne stacked
+        fig3 = go.Figure()
+        for label, col in intensity_cols.items():
+            if col in plot_df.columns:
+                fig3.add_trace(go.Bar(
+                    name=label,
+                    x=plot_df["Week Label"],
+                    y=plot_df[col],
+                    marker_color=component_colors[label],
+                    text=plot_df[col].apply(lambda v: f"{v:,.0f}" if v > 0 else ""),
+                    textposition="inside",
+                    insidetextanchor="middle",
+                ))
+
+        fig3.update_layout(
+            barmode="stack",
+            title="Energy Intensity by Component — Stacked (Last 12 Weeks)",
+            yaxis_title="MWh per tonne CO₂",
+            template="plotly_dark",
+            paper_bgcolor="rgba(0,0,0,0)",
+            plot_bgcolor="rgba(0,0,0,0)",
+            font=dict(color="#f8fafc"),
+            height=420,
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        )
+        st.plotly_chart(fig3, width="stretch")
+
+        # Line chart — track each component's intensity trend independently
+        fig4 = go.Figure()
+        for label, col in intensity_cols.items():
+            if col in plot_df.columns:
+                fig4.add_trace(go.Scatter(
+                    name=label,
+                    x=plot_df["Week Label"],
+                    y=plot_df[col],
+                    mode="lines+markers",
+                    line=dict(color=component_colors[label], width=2),
+                    marker=dict(size=7),
+                ))
+
+        fig4.update_layout(
+            title="Energy Intensity Trend by Component (Last 12 Weeks)",
+            yaxis_title="MWh per tonne CO₂",
+            template="plotly_dark",
+            paper_bgcolor="rgba(0,0,0,0)",
+            plot_bgcolor="rgba(0,0,0,0)",
+            font=dict(color="#f8fafc"),
+            height=380,
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        )
+        st.plotly_chart(fig4, width="stretch")
+
+        # Weekly breakdown table
+        st.markdown("#### Weekly Intensity Breakdown Table")
+        intensity_table_cols = ["Week Label", "Collected CO₂ (kg)"] + list(intensity_cols.values()) + ["Energy Intensity (MWh/tCO₂)"]
+        existing_intensity_cols = [c for c in intensity_table_cols if c in summary_df.columns]
+        rename_map = {v: k for k, v in intensity_cols.items()}
+        rename_map["Energy Intensity (MWh/tCO₂)"] = "Total (MWh/tCO₂)"
+        st.dataframe(
+            summary_df[existing_intensity_cols]
+            .rename(columns=rename_map)
+            .sort_values("Week Label", ascending=False),
+            width="stretch",
+            hide_index=True,
+        )
+
+        # Download intensity report
+        intensity_csv = (
+            summary_df[existing_intensity_cols]
+            .rename(columns=rename_map)
+            .to_csv(index=False)
+            .encode("utf-8-sig")
+        )
+        st.download_button(
+            "📥 Download Energy Intensity Report (CSV)",
+            intensity_csv,
+            "octavia_energy_intensity.csv",
+            "text/csv",
+            width="stretch",
+        )
 
     with report_tab5:
         st.markdown("### 📤 Export Data")
@@ -754,7 +870,7 @@ def main() -> None:
             st.caption(f"{len(summary_df)} weeks of data")
             
             # CSV export
-            csv_summary = summary_df.to_csv(index=False).encode('utf-8')
+            csv_summary = summary_df.to_csv(index=False).encode('utf-8-sig')
             st.download_button(
                 "📥 Download Weekly Summary (CSV)",
                 csv_summary,
@@ -781,7 +897,7 @@ def main() -> None:
             st.caption(f"{len(cycle_df)} cycles of data")
             
             if not cycle_df.empty:
-                csv_cycles = cycle_df.to_csv(index=False).encode('utf-8')
+                csv_cycles = cycle_df.to_csv(index=False).encode('utf-8-sig')
                 st.download_button(
                     "📥 Download Cycle Data (CSV)",
                     csv_cycles,
@@ -818,13 +934,13 @@ def main() -> None:
             "Embodied Emissions (tonnes CO2)": summary_df["Total Embodied (kg)"] / 1000,
             "Total Emissions (tonnes CO2)": summary_df["Total Emissions (kg)"] / 1000,
             "Net Removal (tonnes CO2)": summary_df["Net Removal (kg)"] / 1000,
-            "Energy Intensity (kWh/tCO2)": summary_df["Energy Intensity (kWh/tCO₂)"],
+            "Energy Intensity (kWh/tCO2)": summary_df["Energy Intensity (MWh/tCO₂)"],
             "Verification Status": "Pending",
         })
         
         st.dataframe(puro_df, width="stretch", hide_index=True)
         
-        csv_puro = puro_df.to_csv(index=False).encode('utf-8')
+        csv_puro = puro_df.to_csv(index=False).encode('utf-8-sig')
         st.download_button(
             "📥 Download Puro.earth Format (CSV)",
             csv_puro,
