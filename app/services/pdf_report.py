@@ -14,7 +14,6 @@ import copy
 import io
 from datetime import datetime
 from pathlib import Path
-from statistics import median
 from typing import Optional
 
 import kaleido
@@ -96,6 +95,18 @@ def _register_unicode_font() -> tuple[str, str, str]:
             r"C:\Windows\Fonts\ariali.ttf",
         ),
         (
+            # Installed via packages.txt's `fonts-liberation` on the hosted
+            # deployment (Streamlit Cloud's base image has no fonts of its
+            # own beyond the bare minimum) — checked first on Linux since
+            # it's guaranteed present there, unlike DejaVu below.
+            "PDFReportSans",
+            "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+            "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+            "/usr/share/fonts/truetype/liberation/LiberationSans-Italic.ttf",
+        ),
+        (
+            # Installed via packages.txt's `fonts-dejavu-core` as a second
+            # option in case the Liberation path above ever differs.
             "PDFReportSans",
             "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
             "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
@@ -300,136 +311,54 @@ def _trend_chart(df: pd.DataFrame, current_start_date) -> Optional[go.Figure]:
     return fig
 
 
-_ANOMALY_LOW, _ANOMALY_HIGH = 0.7, 1.4  # "notably different from typical" thresholds
-
-
-def _typical(values: pd.Series, min_samples: int = 2) -> Optional[float]:
-    """Median of prior weeks' values, ignoring structural zeros (e.g. energy
-    intensity is 0 when there was nothing to divide by, not a real reading of
-    zero) — None if there isn't enough history yet to call anything "typical"."""
-    clean = values[values > 0]
-    return median(clean) if len(clean) >= min_samples else None
-
-
-def _build_narrative(row: pd.Series, df: pd.DataFrame) -> str:
-    """A short, data-driven paragraph comparing THIS week against its own recent
-    baseline — not just describing proportions within the week in isolation.
-
-    Proportional framing alone ("X was the biggest consumer, Y% of the total")
-    is misleading on its own: a week running at a fraction of normal activity
-    produces the same-shaped sentence as a full week, without it meaning
-    anything close to the same thing (256 kWh of Boiler A in a 13-cycle week
-    reads identically to 7,744 kWh in a 57-cycle week if nothing says which is
-    which). Every comparison below is against the trailing weeks *before* this
-    one, so the reader knows whether a number is normal, unusually small, or
-    unusually large for this plant — not just its share of this week's own pie.
+def _build_narrative(row: pd.Series) -> str:
+    """A compact, fixed-shape stat line for this week — deliberately not a
+    narrative. An earlier version compared each week against a trailing
+    baseline ("busier than usual", "well above its typical X kWh"), which was
+    more accurate but reads as a growing paragraph of storytelling rather
+    than a report a plant operator can scan every week — not scalable as a
+    once-a-week generated artifact. This states this week's own numbers only:
+    energy intensity, the operational/embodied split, the largest energy
+    consumer, and the largest process-loss stage — always the same shape.
     """
-    prior = df[df["start_date"] < row["start_date"]]
-    parts = []
-
-    if len(prior) < 2:
-        parts.append(
-            "This is one of the earliest tracked weeks — there isn't enough history yet "
-            "to say whether this week's figures are typical, so treat the numbers below "
-            "as absolute readings, not as compared against a steady state."
-        )
-
-    # --- Activity level first: frames how to read everything that follows ---
-    cycles = row["total_cycles"] or 0
-    typical_cycles = _typical(prior["total_cycles"]) if "total_cycles" in prior.columns else None
-    if typical_cycles:
-        ratio = cycles / typical_cycles if typical_cycles else 0
-        if ratio < _ANOMALY_LOW:
-            parts.append(
-                f"This was a <b>light week</b> — {int(cycles)} cycles versus a typical "
-                f"~{typical_cycles:.0f} — so the figures below are smaller than usual, and "
-                f"proportional shares can shift without reflecting any real process change."
-            )
-        elif ratio > _ANOMALY_HIGH:
-            parts.append(
-                f"This was a <b>busier week than usual</b> — {int(cycles)} cycles versus a "
-                f"typical ~{typical_cycles:.0f}."
-            )
-
-    # --- Energy intensity vs baseline: the actual driver of whether operational
-    # emissions per tonne captured got better or worse, as opposed to just
-    # naming whichever subsystem happens to be biggest ---
     intensity = row["energy_intensity_kwh_per_tonne"] or 0
-    typical_intensity = _typical(prior["energy_intensity_kwh_per_tonne"]) if "energy_intensity_kwh_per_tonne" in prior.columns else None
-    if intensity > 0 and typical_intensity:
-        ratio = intensity / typical_intensity
-        if ratio < _ANOMALY_LOW:
-            parts.append(
-                f"Energy intensity was {intensity / 1000:.1f} MWh/t this week, well below the "
-                f"typical ~{typical_intensity / 1000:.1f} MWh/t — the main reason operational "
-                f"emissions per tonne captured were lower than usual."
-            )
-        elif ratio > _ANOMALY_HIGH:
-            parts.append(
-                f"Energy intensity was {intensity / 1000:.1f} MWh/t this week, well above the "
-                f"typical ~{typical_intensity / 1000:.1f} MWh/t — the main reason operational "
-                f"emissions per tonne captured were higher than usual."
-            )
 
-    # --- Emissions mix, with the structural reason folded in rather than left
-    # for the reader to wrongly infer "embodied got worse" ---
     op = row["total_operational_emissions_kg"] or 0
     em = row["total_embodied_emissions_kg"] or 0
     total = op + em
-    if total > 0:
-        op_share = op / total * 100
-        bigger = "operational" if op >= em else "embodied"
-        parts.append(
-            f"<b>{bigger}</b> emissions were the larger contributor to the total this week "
-            f"({op_share:.0f}% operational vs {100 - op_share:.0f}% embodied) — embodied is a "
-            f"near-fixed per-tonne charge, so its share rises whenever less is captured, "
-            f"independent of anything operational."
-        )
+    op_share = (op / total * 100) if total else 0
 
-    # --- Top energy consumer, contextualized against its OWN typical usage —
-    # not just its share of a pie that may itself be unusually small or large ---
     subsystems = [
-        (name, row.get(col, 0) or 0, col)
+        (name, row.get(col, 0) or 0)
         for name, col, _ in CN_ENERGY_SUBSYSTEMS
-        if name not in ("Main Utility",)
+        if name != "Main Utility"
     ]
     subsystems = [s for s in subsystems if s[1] > 0]
+    consumer_stat = "—"
     if subsystems:
         subsystems.sort(key=lambda x: -x[1])
-        top_name, top_val, top_col = subsystems[0]
-        total_energy = sum(v for _, v, _ in subsystems)
+        top_name, top_val = subsystems[0]
+        total_energy = sum(v for _, v in subsystems)
         share = (top_val / total_energy * 100) if total_energy else 0
-        typical_top = _typical(prior[top_col]) if top_col in prior.columns else None
-        context = ""
-        if typical_top:
-            ratio = top_val / typical_top
-            if ratio < 0.6:
-                context = f" — well below its typical ~{typical_top:,.0f} kWh"
-            elif ratio > _ANOMALY_HIGH:
-                context = f" — well above its typical ~{typical_top:,.0f} kWh"
-            else:
-                context = f", in line with its typical ~{typical_top:,.0f} kWh"
-        parts.append(
-            f"<b>{top_name}</b> was the largest single energy consumer this week "
-            f"({top_val:,.0f} kWh, {share:.0f}% of metered process + liquefaction energy)"
-            f"{context}."
-        )
+        consumer_stat = f"<b>{top_name}</b> — {top_val:,.0f} kWh ({share:.0f}%)"
 
-    # --- Top process-loss stage — about the physical process itself, not
-    # confounded by week-to-week activity scale the same way the above are ---
     ads = row["total_ads_co2_kg"] or 0
     loss1, loss2, loss3 = row["loss_stage_1_kg"] or 0, row["loss_stage_2_kg"] or 0, row["loss_stage_3_kg"] or 0
-    stage_losses = [("adsorption → desorption", loss1), ("desorption → collection", loss2), ("collection → liquefaction", loss3)]
+    stage_losses = [("Adsorption→Desorption", loss1), ("Desorption→Collection", loss2), ("Collection→Liquefaction", loss3)]
     stage_losses = [s for s in stage_losses if s[1] > 0]
+    loss_stat = "—"
     if stage_losses and ads > 0:
         stage_losses.sort(key=lambda x: -x[1])
         top_stage, top_loss = stage_losses[0]
-        parts.append(
-            f"On the process side, the <b>{top_stage}</b> stage accounted for the largest single "
-            f"loss of CO&#8322; ({top_loss:,.1f} kg, {top_loss / ads * 100:.0f}% of gross adsorbed CO&#8322;) "
-            f"— this is what limits how much of what's adsorbed ultimately counts as captured."
-        )
-    return " ".join(parts) if parts else "Not enough data this week to break down contributing factors."
+        loss_stat = f"<b>{top_stage}</b> — {top_loss:,.1f} kg ({top_loss / ads * 100:.0f}%)"
+
+    stats = [
+        f"Energy intensity: <b>{intensity / 1000:.1f} MWh/t</b>",
+        f"Emissions mix: <b>{op_share:.0f}% operational</b> / {100 - op_share:.0f}% embodied",
+        f"Largest energy consumer: {consumer_stat}",
+        f"Largest process loss: {loss_stat}",
+    ]
+    return "&nbsp;&nbsp;·&nbsp;&nbsp;".join(stats)
 
 
 def generate_weekly_pdf_report(session, week_start: datetime, series_filter: Optional[str] = None) -> bytes:
@@ -503,7 +432,7 @@ def generate_weekly_pdf_report(session, week_start: datetime, series_filter: Opt
 
     # --- Narrative ---
     story.append(Paragraph("What's Driving This Week's Result", styles["h2"]))
-    story.append(Paragraph(_build_narrative(row, df), styles["body"]))
+    story.append(Paragraph(_build_narrative(row), styles["body"]))
     story.append(Spacer(1, 6 * mm))
 
     # --- Sorbent working capacity ---
