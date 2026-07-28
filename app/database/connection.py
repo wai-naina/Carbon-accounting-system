@@ -19,12 +19,33 @@ def get_engine():
         # PostgreSQL (e.g. Neon) - ensure postgresql:// scheme for SQLAlchemy
         if database_url.startswith("postgres://"):
             database_url = database_url.replace("postgres://", "postgresql://", 1)
-        return create_engine(database_url, future=True)
+        return create_engine(
+            database_url,
+            future=True,
+            # Serverless/free-tier Postgres (Neon etc.) can suspend the
+            # instance or drop idle connections; without pool_pre_ping,
+            # SQLAlchemy hands out the stale connection anyway and the next
+            # query fails with OperationalError instead of transparently
+            # reconnecting. pool_recycle proactively retires connections
+            # before a proxy/server-side idle timeout kills them first.
+            pool_pre_ping=True,
+            pool_recycle=300,
+        )
     # Fallback to SQLite for local development
     ensure_directories()
     config = load_config()
     db_path = config.db_path
-    return create_engine(f"sqlite:///{db_path}", future=True)
+    return create_engine(
+        f"sqlite:///{db_path}",
+        future=True,
+        pool_pre_ping=True,
+        # A concurrent Streamlit Cloud app reruns this on every user
+        # interaction from every connected session — SQLite's default
+        # behavior is to raise "database is locked" immediately on any
+        # write/read contention rather than wait. A busy timeout makes it
+        # wait for the other transaction to finish instead of failing.
+        connect_args={"timeout": 15},
+    )
 
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=get_engine())
@@ -34,12 +55,33 @@ def get_session():
     return SessionLocal()
 
 
+_initialized = False
+
+
 def init_db() -> None:
+    """Create tables and seed defaults — but only once per running server
+    process, not on every script rerun.
+
+    Every page in this app calls init_db() unconditionally at the top of its
+    own main(), and Streamlit reruns that on every single user interaction
+    for every connected session. On a hosted deployment with several people
+    using the app at once, that turned into a steady stream of redundant
+    schema-check + seed-check queries hitting the same database concurrently
+    — exactly the kind of write contention that produces intermittent
+    OperationalErrors (SQLite raises "database is locked" under concurrent
+    access, and even Postgres has no reason to re-run this every time). A
+    process-wide flag makes every call after the first a no-op. If init
+    fails partway, the flag is never set, so the next call retries properly.
+    """
+    global _initialized
+    if _initialized:
+        return
     engine = get_engine()
     Base.metadata.create_all(bind=engine)
     _seed_system_config()
     _seed_admin_user()
     _seed_sorbent_config()
+    _initialized = True
 
 
 def _seed_system_config() -> None:

@@ -518,7 +518,14 @@ def main() -> None:
 
     st.markdown(get_brand_css(), unsafe_allow_html=True)
 
-    if not require_login():
+    if not st.session_state.get("authenticated", False):
+        # Always route through st.navigation(), even for the login screen —
+        # same reasoning as the picker below: otherwise Streamlit falls back
+        # to auto-discovering app/pages/*.py, leaking every page's name into
+        # the sidebar before anyone's even logged in.
+        login_page = st.Page(require_login, title="Login", icon="🔒", default=True)
+        pg = st.navigation([login_page], position="hidden")
+        pg.run()
         return
 
     render_logo(location="sidebar", width=200)
