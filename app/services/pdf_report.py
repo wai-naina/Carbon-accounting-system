@@ -17,6 +17,7 @@ from pathlib import Path
 from statistics import median
 from typing import Optional
 
+import kaleido
 import pandas as pd
 import plotly.graph_objects as go
 from reportlab.lib import colors
@@ -126,9 +127,30 @@ def _register_unicode_font() -> tuple[str, str, str]:
 FONT_REGULAR, FONT_BOLD, FONT_ITALIC = _register_unicode_font()
 
 
+_chrome_ready = False
+
+
+def _ensure_chrome() -> None:
+    """Kaleido (the library used to rasterize Plotly figures to PNG) needs an
+    actual Chrome/Chromium binary to render with, and doesn't bundle one —
+    on a bare hosting environment like Streamlit Cloud there's no browser
+    pre-installed, which surfaces as `RuntimeError: Kaleido requires Google
+    Chrome to be installed`. get_chrome_sync() is Plotly's own documented
+    fix (the programmatic equivalent of running `plotly_get_chrome`): it
+    downloads a managed, self-contained Chrome build on first use and skips
+    the download on every call after, so this only costs time once per
+    running server process, not once per report."""
+    global _chrome_ready
+    if _chrome_ready:
+        return
+    kaleido.get_chrome_sync()
+    _chrome_ready = True
+
+
 def _fig_png(fig: go.Figure, width: int = 1000, height: int = 480, scale: float = 2.0) -> bytes:
     """Rasterize a Plotly figure with a solid dark card background instead of the
     live app's transparent one, which would be unreadable against a white PDF page."""
+    _ensure_chrome()
     fig = copy.deepcopy(fig)
     fig.update_layout(paper_bgcolor=CARD_BG, plot_bgcolor=CARD_BG)
     return fig.to_image(format="png", width=width, height=height, scale=scale)
