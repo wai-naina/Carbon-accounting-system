@@ -16,7 +16,8 @@ plant:
 
 emission_factors:
   grid:
-    kenya_power: 0.049
+    kenya_power: 0.049          # Miniplant 2.0 only (frozen historical archive)
+    carbon_nest_kenya_power: 0.0579  # Carbon Nest — updated 2026-07-29
     geothermal: 0.0
 
   materials:

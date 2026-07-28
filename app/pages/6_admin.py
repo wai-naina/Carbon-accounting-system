@@ -1,4 +1,5 @@
 import sys
+from datetime import datetime
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -11,7 +12,7 @@ from app.auth.authorization import require_admin
 from app.auth.security import hash_password
 from app.components.branding import get_brand_css, render_logo
 from app.database.connection import get_session, init_db
-from app.database.models import AuditLog, User, WeeklySummary, CycleData
+from app.database.models import AuditLog, User, WeeklySummary, CycleData, SystemConfig, CarbonNestSorbentConfig
 
 
 def log_action(session, user_id, action, table_name, record_id, field_name=None, old=None, new=None):
@@ -66,7 +67,9 @@ def main() -> None:
         st.divider()
 
         # Tabs
-        tab1, tab2, tab3, tab4 = st.tabs(["👤 Create User", "📋 User List", "📜 Audit Log", "🔧 Maintenance"])
+        tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(
+            ["👤 Create User", "📋 User List", "📜 Audit Log", "🔧 Maintenance", "⚙️ Emission Factors", "🧪 Sorbent Config"]
+        )
 
         with tab1:
             st.markdown("### Create New User")
@@ -262,6 +265,180 @@ def main() -> None:
                     session.query(AuditLog).delete()
                     session.commit()
                     st.success("Audit log cleared.")
+
+        with tab5:
+            st.markdown("### Grid Emission Factors")
+            st.caption(
+                "Kept separate per system so updating one never shifts the other's history — "
+                "Miniplant 2.0 is a frozen archive, Carbon Nest is live and updated as better "
+                "grid data becomes available."
+            )
+
+            def _get_ef_config(key: str) -> SystemConfig | None:
+                return session.query(SystemConfig).filter(SystemConfig.key == key).first()
+
+            def _save_ef(key: str, description: str, new_value: float, old_value: float) -> None:
+                config = _get_ef_config(key)
+                if config:
+                    old_str = config.value
+                    config.value = str(new_value)
+                else:
+                    old_str = None
+                    config = SystemConfig(
+                        key=key, value=str(new_value), value_type="float", description=description
+                    )
+                    session.add(config)
+                log_action(
+                    session, st.session_state.get("user_id"), "update", "system_config",
+                    None, field_name=key, old=old_str, new=str(new_value),
+                )
+                session.commit()
+
+            ef_col1, ef_col2 = st.columns(2)
+
+            with ef_col1:
+                st.markdown("#### 🏭 Miniplant 2.0")
+                mp_config = _get_ef_config("grid_emission_factor")
+                mp_current = float(mp_config.value) if mp_config else 0.049
+                st.caption(f"Current: **{mp_current} kg CO₂/kWh** (frozen historical archive)")
+                mp_new = st.number_input(
+                    "Miniplant grid EF (kg CO₂/kWh)", min_value=0.0, value=mp_current, step=0.001,
+                    format="%.4f", key="ef_miniplant",
+                )
+                if st.button("💾 Save Miniplant EF", key="save_ef_miniplant"):
+                    _save_ef("grid_emission_factor", "Kenya grid EF (kg CO2/kWh) - Miniplant 2.0", mp_new, mp_current)
+                    st.success(f"Miniplant grid EF updated to {mp_new} kg CO₂/kWh.")
+                    st.rerun()
+
+            with ef_col2:
+                st.markdown("#### 🌿 Carbon Nest")
+                cn_config = _get_ef_config("carbon_nest_grid_emission_factor")
+                cn_current = float(cn_config.value) if cn_config else 0.0579
+                st.caption(f"Current: **{cn_current} kg CO₂/kWh**")
+                cn_new = st.number_input(
+                    "Carbon Nest grid EF (kg CO₂/kWh)", min_value=0.0, value=cn_current, step=0.001,
+                    format="%.4f", key="ef_carbon_nest",
+                )
+                if st.button("💾 Save Carbon Nest EF", key="save_ef_carbon_nest"):
+                    _save_ef(
+                        "carbon_nest_grid_emission_factor", "Kenya grid EF (kg CO2/kWh) - Carbon Nest",
+                        cn_new, cn_current,
+                    )
+                    st.success(f"Carbon Nest grid EF updated to {cn_new} kg CO₂/kWh.")
+                    st.info("Existing weekly summaries keep their old emissions until recalculated in Data Entry.")
+                    st.rerun()
+
+        with tab6:
+            st.markdown("### Sorbent Configuration")
+            st.caption(
+                "Sorbent charge and bed volume per module, versioned by effective date "
+                "— add a new row here when a sorbent bed is reloaded. Existing weeks before the "
+                "new row's effective date keep using whichever config was in force at the time, "
+                "so a reload never silently rewrites historical working-capacity figures."
+            )
+
+            st.markdown("#### Current Configuration")
+
+            sc_col1, sc_col2, sc_col3 = st.columns(3)
+            for sc_col, prefix in zip((sc_col1, sc_col2, sc_col3), ("N1", "N2", "N1N2")):
+                with sc_col:
+                    latest = (
+                        session.query(CarbonNestSorbentConfig)
+                        .filter(CarbonNestSorbentConfig.module_prefix == prefix)
+                        .order_by(CarbonNestSorbentConfig.effective_date.desc())
+                        .first()
+                    )
+                    st.markdown(f"**{prefix}**")
+                    if latest:
+                        eff = (
+                            latest.effective_date.strftime("%Y-%m-%d")
+                            if latest.effective_date else "N/A"
+                        )
+                        st.metric("Sorbent Charge (kg)", f"{latest.sorbent_charge_kg:g}")
+                        st.metric("Bed Volume (m³)", f"{latest.bed_volume_m3:g}")
+                        st.caption(f"Effective: {eff}")
+                    else:
+                        st.info("No config set.")
+
+            st.divider()
+
+            st.markdown("#### Add New Configuration")
+            with st.form("create_sorbent_config"):
+                sf_col1, sf_col2 = st.columns(2)
+
+                with sf_col1:
+                    sc_prefix = st.selectbox("Module Prefix *", options=["N1", "N2", "N1N2"])
+                    sc_effective_date = st.date_input("Effective Date *")
+
+                with sf_col2:
+                    sc_charge = st.number_input("Sorbent Charge (kg) *", min_value=0.0, step=0.1, format="%.3f")
+                    sc_volume = st.number_input("Bed Volume (m³) *", min_value=0.0, step=0.01, format="%.4f")
+
+                sc_notes = st.text_input("Notes", placeholder="Optional")
+
+                sc_submitted = st.form_submit_button("💾 Save Configuration", type="primary", width="stretch")
+
+                if sc_submitted:
+                    sc_errors = []
+                    if sc_charge <= 0:
+                        sc_errors.append("Sorbent charge must be positive")
+                    if sc_volume <= 0:
+                        sc_errors.append("Bed volume must be positive")
+
+                    if sc_errors:
+                        for err in sc_errors:
+                            st.error(err)
+                    else:
+                        effective_datetime = datetime.combine(sc_effective_date, datetime.min.time())
+                        session.add(
+                            CarbonNestSorbentConfig(
+                                module_prefix=sc_prefix,
+                                effective_date=effective_datetime,
+                                sorbent_charge_kg=sc_charge,
+                                bed_volume_m3=sc_volume,
+                                notes=sc_notes.strip() or None,
+                                created_by=st.session_state.get("user_id"),
+                            )
+                        )
+                        log_action(
+                            session,
+                            st.session_state.get("user_id"),
+                            "create",
+                            "carbon_nest_sorbent_config",
+                            None,
+                            field_name="module_prefix",
+                            new=sc_prefix,
+                        )
+                        session.commit()
+                        st.success(f"✅ Sorbent configuration for '{sc_prefix}' saved.")
+                        st.rerun()
+
+            st.divider()
+
+            st.markdown("#### Configuration History")
+            sc_history = (
+                session.query(CarbonNestSorbentConfig)
+                .order_by(
+                    CarbonNestSorbentConfig.module_prefix,
+                    CarbonNestSorbentConfig.effective_date,
+                )
+                .all()
+            )
+
+            if sc_history:
+                sc_data = [
+                    {
+                        "Module Prefix": row.module_prefix,
+                        "Effective Date": row.effective_date.strftime("%Y-%m-%d") if row.effective_date else "N/A",
+                        "Sorbent Charge (kg)": row.sorbent_charge_kg,
+                        "Bed Volume (m³)": row.bed_volume_m3,
+                        "Notes": row.notes or "-",
+                    }
+                    for row in sc_history
+                ]
+                st.dataframe(sc_data, width="stretch", hide_index=True)
+            else:
+                st.info("No sorbent configuration history yet.")
 
     finally:
         session.close()

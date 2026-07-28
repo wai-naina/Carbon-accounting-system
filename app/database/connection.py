@@ -6,8 +6,10 @@ from typing import Generator
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
+from datetime import datetime
+
 from app.config import ensure_directories, load_config
-from app.database.models import Base, SystemConfig, User
+from app.database.models import Base, CarbonNestSorbentConfig, SystemConfig, User
 from app.auth.security import hash_password
 
 
@@ -37,6 +39,7 @@ def init_db() -> None:
     Base.metadata.create_all(bind=engine)
     _seed_system_config()
     _seed_admin_user()
+    _seed_sorbent_config()
 
 
 def _seed_system_config() -> None:
@@ -45,7 +48,12 @@ def _seed_system_config() -> None:
         "grid_emission_factor": (
             str(config.get("emission_factors", "grid", "kenya_power", default=0.049)),
             "float",
-            "Kenya grid EF (kg CO2/kWh)",
+            "Kenya grid EF (kg CO2/kWh) - Miniplant 2.0",
+        ),
+        "carbon_nest_grid_emission_factor": (
+            str(config.get("emission_factors", "grid", "carbon_nest_kenya_power", default=0.0579)),
+            "float",
+            "Kenya grid EF (kg CO2/kWh) - Carbon Nest",
         ),
         "geothermal_emission_factor": (
             str(config.get("emission_factors", "grid", "geothermal", default=0.0)),
@@ -81,6 +89,45 @@ def _seed_system_config() -> None:
             session.add(
                 SystemConfig(
                     key=key, value=value, value_type=value_type, description=description
+                )
+            )
+        session.commit()
+    finally:
+        session.close()
+
+
+def _seed_sorbent_config() -> None:
+    """Seed the initial (module_prefix, sorbent_charge_kg, bed_volume_m3) rows,
+    effective from the plant's own start date so they apply to all historical
+    cycles unless a later row (e.g. after a sorbent reload) overrides them."""
+    config = load_config()
+    effective_date_str = config.get("plant", "start_date", default="2026-01-01")
+    effective_date = datetime.strptime(str(effective_date_str), "%Y-%m-%d")
+    defaults = [
+        ("N1", 513.8, 0.59388),
+        ("N2", 457.5, 0.59388),
+        ("N1N2", 971.3, 1.18776),
+    ]
+    session = get_session()
+    try:
+        for prefix, charge_kg, volume_m3 in defaults:
+            exists = (
+                session.query(CarbonNestSorbentConfig)
+                .filter(
+                    CarbonNestSorbentConfig.module_prefix == prefix,
+                    CarbonNestSorbentConfig.effective_date == effective_date,
+                )
+                .first()
+            )
+            if exists:
+                continue
+            session.add(
+                CarbonNestSorbentConfig(
+                    module_prefix=prefix,
+                    effective_date=effective_date,
+                    sorbent_charge_kg=charge_kg,
+                    bed_volume_m3=volume_m3,
+                    notes="Initial commissioning values",
                 )
             )
         session.commit()

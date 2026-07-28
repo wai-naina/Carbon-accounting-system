@@ -78,6 +78,6 @@ def authenticate_user(username: str, password: str) -> bool:
 
 
 def logout() -> None:
-    for key in ["authenticated", "user_id", "username", "role"]:
+    for key in ["authenticated", "user_id", "username", "role", "data_system"]:
         if key in st.session_state:
             del st.session_state[key]

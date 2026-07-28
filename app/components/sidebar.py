@@ -76,3 +76,60 @@ def render_filter_indicator(pair_filter: str) -> None:
             <span style="opacity: 0.7; font-size: 0.75rem;">• Change in sidebar</span>
         </div>
         """, unsafe_allow_html=True)
+
+
+def render_series_filter() -> str:
+    """
+    Render the Carbon Nest series filter (1n3 / 2n4) in the sidebar.
+
+    Uses its own session-state key (cn_series_filter) so it never collides
+    with the Miniplant 2.0 module_pair_filter.
+
+    Returns:
+        str or None: "1n3", "2n4", or None for "all"
+    """
+    st.sidebar.markdown("""
+    <div style="margin-top: 1rem; margin-bottom: 0.5rem;">
+        <span style="font-size: 0.75rem; color: #6B7280; letter-spacing: 0.5px; text-transform: uppercase; font-weight: 500;">
+            Data Filter
+        </span>
+    </div>
+    """, unsafe_allow_html=True)
+
+    series_options = {
+        "all": "All Series (Combined)",
+        "1n3": "Series 1 & 3 (Group A)",
+        "2n4": "Series 2 & 4 (Group B)",
+    }
+
+    if "cn_series_filter" not in st.session_state:
+        st.session_state.cn_series_filter = "all"
+
+    selected_series = st.sidebar.radio(
+        "View data for:",
+        options=list(series_options.keys()),
+        format_func=lambda x: series_options[x],
+        key="cn_series_filter",
+        help="Filter Carbon Nest dashboard and report data by series. Per-Nelion "
+        "filtering isn't available yet — SCADA can't distinguish Nelion 1 vs 2 "
+        "on interleaved cycles.",
+        label_visibility="collapsed",
+    )
+
+    if selected_series != "all":
+        series_name = series_options[selected_series]
+        st.sidebar.markdown(f"""
+        <div style="
+            background: #1A5F5F;
+            color: white;
+            padding: 0.5rem 0.75rem;
+            border-radius: 4px;
+            font-size: 0.875rem;
+            margin-top: 0.5rem;
+            text-align: center;
+        ">
+            Filtering: <strong>{series_name}</strong>
+        </div>
+        """, unsafe_allow_html=True)
+
+    return None if selected_series == "all" else selected_series

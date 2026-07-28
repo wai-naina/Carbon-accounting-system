@@ -174,6 +174,159 @@ class EmbodiedSorbent(Base):
     updated_by = Column(Integer, ForeignKey("users.id"))
 
 
+class CarbonNestCycleData(Base):
+    """Cycle-level SCADA data from the Carbon Nest system.
+
+    Kept fully separate from the legacy Miniplant 2.0 `CycleData` table so
+    cycle numbering, column shape, and history never collide between the
+    two data sources. Carbon Nest cycle numbers are unique on their own
+    (no Machine/Module component needed to disambiguate).
+    """
+
+    __tablename__ = "carbon_nest_cycle_data"
+
+    id = Column(Integer, primary_key=True)
+    weekly_summary_id = Column(Integer, ForeignKey("carbon_nest_weekly_summary.id"))
+    cycle_number = Column(Integer, nullable=False, unique=True)
+
+    raw_module = Column(String, nullable=False)  # e.g. "N1N2-M1n3", "N2-M2n4" as exported by SCADA
+    series = Column(String, nullable=False)  # "1n3" or "2n4" — the module group/series
+    nelion = Column(String)  # "N1"/"N2"/"N3"/"N4" when unambiguous; NULL when SCADA reports a combined reading
+
+    start_time = Column(DateTime, nullable=False)
+    end_time = Column(DateTime)
+    cycle_type = Column(String)  # "Interleaved" / "Concurrent"
+
+    ads_co2_kg = Column(Float)
+    ads_hours = Column(Float)
+    ads_lost_co2_kg = Column(Float)
+    ads_efficiency = Column(Float)
+    ads_mass_cap = Column(Float)
+    ads_vol_cap = Column(Float)
+
+    des_co2_kg = Column(Float)
+    des_hours = Column(Float)
+    des_efficiency = Column(Float)
+    des_vol_cap = Column(Float)
+
+    bag_co2_kg = Column(Float)
+    bag_efficiency = Column(Float)
+
+    total_kwh = Column(Float)
+    mwh_per_tco2 = Column(Float)
+
+    fans_kwh = Column(Float)
+    ct_kwh = Column(Float)
+    ct_pump_kwh = Column(Float)
+    vp402_kwh = Column(Float)
+    vp501_kwh = Column(Float)
+    boiler_a_kwh = Column(Float)
+    boiler_b_kwh = Column(Float)
+    main_utility_kwh = Column(Float)
+
+    steam_kg = Column(Float)
+
+    import_batch_id = Column(String)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    weekly_summary = relationship("CarbonNestWeeklySummary", back_populates="cycles")
+
+
+class CarbonNestWeeklySummary(Base):
+    __tablename__ = "carbon_nest_weekly_summary"
+
+    id = Column(Integer, primary_key=True)
+    # Carbon Nest weeks run Saturday 18:00 -> Saturday 18:00, matching
+    # Athena's own weekly report cadence (Miniplant 2.0 keeps its Mon-based
+    # ISO week, untouched). start_date is the true unique key; year/week_number
+    # are derived, human-readable labels only — see
+    # app/services/carbon_nest_aggregation.py:get_carbon_nest_week_bounds().
+    year = Column(Integer, nullable=False)
+    week_number = Column(Integer, nullable=False)
+    start_date = Column(DateTime, nullable=False, unique=True)
+    end_date = Column(DateTime, nullable=False)
+
+    total_ads_co2_kg = Column(Float)
+    total_des_co2_kg = Column(Float)
+    total_bag_co2_kg = Column(Float)
+    liquefied_co2_kg = Column(Float)
+
+    loss_stage_1_kg = Column(Float)
+    loss_stage_2_kg = Column(Float)
+    loss_stage_3_kg = Column(Float)
+    total_loss_kg = Column(Float)
+
+    # Per-cycle metered energy (SCADA CSV import), summed for the week.
+    fans_kwh = Column(Float)
+    ct_kwh = Column(Float)
+    ct_pump_kwh = Column(Float)
+    vp402_kwh = Column(Float)
+    vp501_kwh = Column(Float)
+    boiler_a_kwh = Column(Float)
+    boiler_b_kwh = Column(Float)
+    main_utility_kwh = Column(Float)  # imported for reference only — not used in totals, see below
+
+    # Manually entered each week from the Athena weekly PDF report, which is
+    # the only source for these right now: the CSV's "Main Utility" column is
+    # a known-buggy/incomplete stand-in for cooling tower/pump/compressor
+    # draw (confirmed with Octavia's SCADA lead, 2026-07-28), and standby
+    # power for boiler/VP units isn't in the CSV export at all. These replace
+    # main_utility_kwh in the weekly total until the SCADA export is fixed.
+    water_pumps_kwh = Column(Float)
+    compressor_a_kwh = Column(Float)
+    compressor_b_kwh = Column(Float)
+    boiler_a_standby_kwh = Column(Float)
+    boiler_b_standby_kwh = Column(Float)
+    vp402_standby_kwh = Column(Float)
+    vp501_standby_kwh = Column(Float)
+    ct_standby_kwh = Column(Float)  # CT & CT Pump also runs process-only in the CSV — confirmed 2026-07-29
+    liquefaction_active_transfer_kwh = Column(Float)
+    liquefaction_standby_kwh = Column(Float)
+    # Sum of the two liquefaction fields above — kept as its own column since
+    # existing code (e.g. per-series liquefaction proration) reads a single
+    # liquefaction energy figure.
+    liquefaction_energy_kwh = Column(Float)
+
+    thermal_energy_kwh = Column(Float)
+    auxiliary_energy_kwh = Column(Float)
+    total_energy_kwh = Column(Float)
+    # Process-only energy (Fans/CT/CT Pump/VP402/VP501/Boiler A/B from the
+    # CSV) — matches SCADA's own per-cycle "MWh/tCO2" convention exactly.
+    # Used for the energy-intensity KPI; total_energy_kwh (above) is used for
+    # operational emissions and includes the manual utility/standby/
+    # liquefaction entries too.
+    process_energy_kwh = Column(Float)
+
+    total_steam_kg = Column(Float)
+
+    thermal_emissions_kg = Column(Float)
+    auxiliary_emissions_kg = Column(Float)
+    total_operational_emissions_kg = Column(Float)
+
+    # Output-based embodied emissions (v0.6 Carbon Nest LCA, kg CO2-eq/t driver
+    # intensities applied to actual captured CO2 this week) — see
+    # app/services/carbon_nest_embodied.py for methodology and sourcing.
+    infrastructure_embodied_kg = Column(Float)
+    sorbent_embodied_kg = Column(Float)
+    total_embodied_emissions_kg = Column(Float)
+
+    gross_captured_kg = Column(Float)
+    total_emissions_kg = Column(Float)
+    net_removal_kg = Column(Float)
+
+    is_net_positive = Column(Boolean)
+
+    energy_intensity_kwh_per_tonne = Column(Float)
+    total_cycles = Column(Integer)
+
+    notes = Column(Text)
+    created_by = Column(Integer, ForeignKey("users.id"))
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, onupdate=datetime.utcnow)
+
+    cycles = relationship("CarbonNestCycleData", back_populates="weekly_summary")
+
+
 class SystemConfig(Base):
     __tablename__ = "system_config"
 
@@ -198,3 +351,31 @@ class AuditLog(Base):
     old_value = Column(Text)
     new_value = Column(Text)
     ip_address = Column(String)
+
+
+class CarbonNestSorbentConfig(Base):
+    """Versioned sorbent charge / bed volume per module prefix (N1, N2, N1N2).
+
+    These are plant configuration, not measured data — but they change when a
+    sorbent bed is reloaded, and a flat "current value" would silently rewrite
+    the working-capacity history for weeks before that reload. Keyed by
+    `effective_date` so a lookup for a given cycle always uses whichever row
+    was in force at that cycle's start_time (the latest row with
+    effective_date <= start_time), leaving earlier weeks' figures untouched
+    when a new row is added for a reload.
+    """
+
+    __tablename__ = "carbon_nest_sorbent_config"
+
+    id = Column(Integer, primary_key=True)
+    module_prefix = Column(String, nullable=False)  # "N1", "N2", "N1N2"
+    effective_date = Column(DateTime, nullable=False)
+    sorbent_charge_kg = Column(Float, nullable=False)
+    bed_volume_m3 = Column(Float, nullable=False)
+    notes = Column(String)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    created_by = Column(Integer, ForeignKey("users.id"))
+
+    __table_args__ = (
+        UniqueConstraint("module_prefix", "effective_date", name="uq_sorbent_config_prefix_date"),
+    )

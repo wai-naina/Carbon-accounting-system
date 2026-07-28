@@ -624,6 +624,169 @@ def waterfall_chart(captured: float, operational: float, embodied: float) -> go.
     return fig
 
 
+def cn_energy_intensity_chart(df: pd.DataFrame) -> go.Figure:
+    """Carbon Nest energy intensity in MWh/tCO2 (matches the units already used
+    in the Carbon Nest SCADA export's own 'MWh/tCO2' column)."""
+    if df.empty:
+        return None
+
+    values_mwh = [(v or 0) / 1000 for v in df["energy_intensity_kwh_per_tonne"]]
+
+    def format_value(v):
+        return f"{v:.2f}"
+
+    fig = go.Figure()
+    fig.add_trace(go.Bar(
+        x=df["week_label"],
+        y=values_mwh,
+        marker_color=COLORS["thermal"],
+        marker_line_color=COLORS["text_light"],
+        marker_line_width=1,
+        text=[format_value(v) for v in values_mwh],
+        textposition="inside",
+        textangle=0,
+        insidetextanchor="middle",
+        textfont=dict(color="white", size=12, family="Inter, sans-serif"),
+        hovertemplate="<b>%{x}</b><br>%{y:,.2f} MWh/tCO₂<extra></extra>",
+    ))
+
+    max_val = max(values_mwh) if values_mwh and max(values_mwh) > 0 else 1
+    apply_chart_layout(
+        fig,
+        title="⚡ Energy Intensity (MWh/tCO₂)",
+        height=380,
+        xaxis_title="Week",
+        yaxis_title="MWh per tonne CO₂",
+    )
+    fig.update_layout(yaxis=dict(range=[0, max_val * 1.15], tickformat=","), bargap=0.3)
+    return fig
+
+
+# Carbon Nest energy-by-subsystem palette — shared so the live dashboard chart and
+# the PDF report's single-week chart always stay visually consistent. Each hue is
+# chosen to stay visually distinct from its neighbors at a glance — an earlier
+# palette paired near-identical hues (Boiler A/B were both a barely-distinguishable
+# orange, CT/CT Pump both sky blue, VP402/VP501 both violet), which defeats the
+# point of a stacked chart even though the legend text technically still
+# differentiates them.
+CN_ENERGY_SUBSYSTEMS = [
+    ("Boiler A", "boiler_a_kwh", "#F97316"),      # orange
+    ("Boiler B", "boiler_b_kwh", "#FACC15"),      # amber/gold
+    ("Fans", "fans_kwh", "#14B8A6"),               # teal
+    ("CT", "ct_kwh", "#0EA5E9"),                   # sky blue
+    ("CT Pump", "ct_pump_kwh", "#3B82F6"),         # blue
+    ("VP402", "vp402_kwh", "#A855F7"),             # violet
+    ("VP501", "vp501_kwh", "#EC4899"),             # pink
+    ("Main Utility", "main_utility_kwh", "#94A3B8"),  # neutral gray
+    ("Liquefaction", "liquefaction_energy_kwh", "#6366F1"),  # indigo
+]
+
+
+def cn_energy_breakdown_chart(df: pd.DataFrame) -> go.Figure:
+    """Stacked bar of Carbon Nest energy by subsystem (Boiler A/B, Fans, CT, CT Pump, VP402/501, Main Utility)."""
+    if df.empty:
+        return None
+
+    fig = go.Figure()
+    for name, col, color in CN_ENERGY_SUBSYSTEMS:
+        fig.add_trace(go.Bar(
+            name=name,
+            x=df["week_label"],
+            y=df.get(col, [0] * len(df)),
+            marker_color=color,
+            marker_line_color="#1E293B",
+            marker_line_width=1,
+            hovertemplate=f"<b>%{{x}}</b><br>{name}: %{{y:,.0f}} kWh<extra></extra>",
+        ))
+
+    apply_chart_layout(
+        fig,
+        title="⚡ Carbon Nest Energy by Subsystem",
+        height=380,
+        xaxis_title="Week",
+        yaxis_title="Energy (kWh)",
+    )
+    # 9 stacked categories don't fit on one horizontal legend row in this chart's
+    # (typically half-width) column — a horizontal legend either wraps onto extra
+    # rows or, worse, sits high enough to overlap the title above it. A vertical
+    # legend down the right side scales with item count instead of column width.
+    fig.update_layout(
+        barmode="stack",
+        legend=dict(orientation="v", yanchor="top", y=1, xanchor="left", x=1.02, font=dict(size=10)),
+        bargap=0.3,
+        margin=dict(r=145),
+    )
+    return fig
+
+
+def embodied_driver_chart(drivers: list) -> go.Figure:
+    """Horizontal bar of the v0.6 LCA embodied/sorbent drivers (kg CO2-eq/t), excluding Energy."""
+    non_energy = [d for d in drivers if d["pool"] != "energy"]
+    if not non_energy:
+        return None
+
+    non_energy = sorted(non_energy, key=lambda d: d["kg_co2_per_tonne"])
+    pool_colors = {"infrastructure": "#A855F7", "sorbent": "#F59E0B"}
+
+    fig = go.Figure(go.Bar(
+        x=[d["kg_co2_per_tonne"] for d in non_energy],
+        y=[d["label"] for d in non_energy],
+        orientation="h",
+        marker_color=[pool_colors.get(d["pool"], COLORS["neutral"]) for d in non_energy],
+        marker_line_color="#1E293B",
+        marker_line_width=1,
+        text=[f"{d['kg_co2_per_tonne']:.1f}" for d in non_energy],
+        textposition="outside",
+        textfont=dict(color=COLORS["text_light"], size=12, family="Inter, sans-serif"),
+        customdata=[[d["data_quality"], d["note"]] for d in non_energy],
+        hovertemplate="<b>%{y}</b><br>%{x:.2f} kg CO₂-eq/t<br>Data quality: %{customdata[0]}<br>%{customdata[1]}<extra></extra>",
+    ))
+
+    apply_chart_layout(
+        fig,
+        title="🏗️ Embodied Emissions by Driver (v0.6 LCA)",
+        height=340,
+        xaxis_title="kg CO₂-eq per tonne captured",
+        showlegend=False,
+    )
+    return fig
+
+
+def embodied_pool_split_chart(operational_kg: float, infrastructure_kg: float, sorbent_kg: float) -> go.Figure:
+    """Donut of a period's realized emissions: operational vs embodied capital vs sorbent chain."""
+    labels = ["Operational (metered energy)", "Infrastructure (embodied capital)", "Sorbent chain"]
+    values = [operational_kg, infrastructure_kg, sorbent_kg]
+    colors = [COLORS["thermal"], "#A855F7", "#F59E0B"]
+
+    non_zero = [(l, v, c) for l, v, c in zip(labels, values, colors) if v > 0]
+    if not non_zero:
+        return None
+    labels, values, colors = zip(*non_zero)
+    total = sum(values)
+
+    fig = go.Figure(data=[go.Pie(
+        labels=list(labels),
+        values=list(values),
+        hole=0.5,
+        marker_colors=list(colors),
+        textinfo="percent",
+        textposition="inside",
+        textfont=dict(color="white", size=13, family="Inter, sans-serif"),
+        hovertemplate="<b>%{label}</b><br>%{value:,.1f} kg CO₂<br>%{percent}<extra></extra>",
+    )])
+    fig.update_traces(marker=dict(line=dict(color="#1E293B", width=2)))
+    apply_chart_layout(fig, title="🥧 Realized Emissions Split", height=380, showlegend=True)
+    fig.update_layout(
+        annotations=[dict(
+            text=f"<b>{total:.0f}</b><br>kg CO₂",
+            x=0.5, y=0.5, font_size=14, showarrow=False,
+            font=dict(color=COLORS["text_light"], family="Inter, sans-serif"),
+        )],
+        legend=dict(orientation="h", yanchor="bottom", y=-0.2, xanchor="center", x=0.5),
+    )
+    return fig
+
+
 def module_comparison_chart(pair_data: dict) -> go.Figure:
     """Create a comparison chart between Module pairs."""
     if not pair_data:

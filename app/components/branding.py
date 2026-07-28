@@ -71,6 +71,43 @@ def render_logo(location: str = "sidebar", width: int = 180) -> None:
             """, unsafe_allow_html=True)
 
 
+def render_stat_tile(icon: str, color: str, label: str, value: str, sub: str = "") -> str:
+    """Compact icon + label + value KPI tile (Athena-inspired). Returns HTML for st.markdown.
+
+    Built as a single line deliberately: a blank (or whitespace-only) line inside an
+    unsafe_allow_html block ends Streamlit/CommonMark's raw-HTML-block parsing early,
+    so any indented lines after it (like the closing </div>s) get re-parsed as an
+    indented code block and rendered as literal text instead of markup.
+    """
+    sub_html = f'<div class="stat-tile-sub">{sub}</div>' if sub else ""
+    return (
+        f'<div class="stat-tile">'
+        f'<div class="stat-tile-icon {color}">{icon}</div>'
+        f'<div>'
+        f'<div class="stat-tile-label">{label}</div>'
+        f'<div class="stat-tile-value">{value}</div>'
+        f'{sub_html}'
+        f'</div>'
+        f'</div>'
+    )
+
+
+def render_hero_metric(label: str, value: str, color: str, sub: str = "") -> str:
+    """The single headline figure a page leads with. Returns HTML for st.markdown.
+
+    Single line for the same reason as render_stat_tile above — avoids a blank-line
+    HTML-block termination bug in Streamlit's markdown renderer.
+    """
+    sub_html = f'<div class="hero-metric-sub">{sub}</div>' if sub else ""
+    return (
+        f'<div class="hero-metric">'
+        f'<div class="hero-metric-label">{label}</div>'
+        f'<div class="hero-metric-value" style="color:{color};">{value}</div>'
+        f'{sub_html}'
+        f'</div>'
+    )
+
+
 def render_header_with_logo() -> None:
     """Render a professional header for dark theme."""
     st.markdown("""
@@ -115,15 +152,30 @@ def get_brand_css() -> str:
         padding-bottom: 2rem;
     }
     
-    /* Hide default Streamlit branding */
+    /* Hide default Streamlit branding.
+       Note: header/[data-testid="stHeader"] is intentionally NOT hidden —
+       it's also the container Streamlit renders the sidebar's
+       expand/collapse control (stExpandSidebarButton) into. Hiding the
+       whole header makes that control invisible AND unclickable, which
+       permanently traps a collapsed sidebar with no way to reopen it.
+       Instead we keep the header itself but make it blend into the dark
+       theme, and hide only the specific chrome elements we don't want. */
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
-    header {visibility: hidden;}
+    [data-testid="stHeader"] {
+        background: transparent !important;
+        box-shadow: none !important;
+    }
     [data-testid="stToolbar"] {visibility: hidden;}
     [data-testid="stDecoration"] {display: none;}
     [data-testid="stDeployButton"] {display: none;}
     [data-testid="stStatusWidget"] {display: none !important;}
     [data-testid="manage-app-button"] {display: none !important;}
+    [data-testid="stExpandSidebarButton"] {
+        visibility: visible !important;
+        opacity: 1 !important;
+        pointer-events: auto !important;
+    }
     .viewerBadge_container__r5tak {display: none !important;}
     .viewerBadge_link__qRIco {display: none !important;}
     #stDecoration {display: none !important;}
@@ -440,7 +492,15 @@ def get_brand_css() -> str:
     .stTextInput > div > div > input:focus {
         border-color: #3DB3B3;
     }
-    
+
+    /* Selectbox/multiselect controls open a dropdown on click, but their underlying
+       BaseWeb element is a (readonly) <input>, which browsers default to an I-beam
+       text cursor — misleading since there's nothing to type/select as text here. */
+    [data-baseweb="select"] > div,
+    [data-baseweb="select"] input {
+        cursor: pointer !important;
+    }
+
     /* Metrics - Dark theme */
     [data-testid="stMetricValue"] {
         color: #F1F5F9;
@@ -577,6 +637,231 @@ def get_brand_css() -> str:
     .stDataFrame td {
         background-color: #1E293B !important;
         color: #F1F5F9 !important;
+    }
+
+    /* Hero metric — the single headline figure a page leads with */
+    .hero-metric {
+        background: linear-gradient(135deg, #1E293B 0%, #16212F 100%);
+        border: 1px solid #334155;
+        border-radius: 10px;
+        padding: 1.5rem 1.75rem;
+        height: 100%;
+    }
+
+    .hero-metric-label {
+        font-size: 0.72rem;
+        font-weight: 600;
+        letter-spacing: 0.6px;
+        color: #94A3B8;
+        text-transform: uppercase;
+        margin-bottom: 0.5rem;
+    }
+
+    .hero-metric-value {
+        font-size: 3rem;
+        font-weight: 700;
+        line-height: 1.1;
+        margin-bottom: 0.5rem;
+    }
+
+    .hero-metric-sub {
+        font-size: 0.78rem;
+        color: #94A3B8;
+    }
+
+    /* Plant environment picker — post-login system chooser */
+    .env-picker-header {
+        text-align: center;
+        padding: 2rem 0 0.5rem 0;
+    }
+
+    .env-picker-icon {
+        width: 64px;
+        height: 64px;
+        margin: 0 auto 1.25rem auto;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 1.75rem;
+        background: rgba(61, 179, 179, 0.12);
+        border: 1px solid rgba(61, 179, 179, 0.35);
+        box-shadow: 0 0 0 8px rgba(61, 179, 179, 0.06), 0 0 0 16px rgba(61, 179, 179, 0.03);
+    }
+
+    .env-picker-title {
+        font-size: 1.75rem;
+        font-weight: 700;
+        color: #F1F5F9;
+        margin: 0 0 0.35rem 0;
+    }
+
+    .env-picker-subtitle {
+        color: #94A3B8;
+        font-size: 0.9rem;
+        margin: 0 0 1rem 0;
+    }
+
+    .env-user-pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.4rem;
+        background: #1E293B;
+        border: 1px solid #334155;
+        color: #CBD5E1;
+        padding: 0.3rem 0.9rem;
+        border-radius: 999px;
+        font-size: 0.8rem;
+    }
+
+    .env-card-header {
+        display: flex;
+        align-items: center;
+        gap: 0.9rem;
+        margin: -1rem -1rem 0.9rem -1rem;
+        padding: 1.1rem 1.1rem 1rem 1.1rem;
+        border-radius: 8px 8px 0 0;
+    }
+
+    .env-card-header.active {
+        background: linear-gradient(135deg, #1D6E6E 0%, #175454 100%);
+    }
+
+    .env-card-header.archive {
+        background: #263447;
+    }
+
+    .env-card-icon-badge {
+        width: 42px;
+        height: 42px;
+        border-radius: 10px;
+        background: rgba(255, 255, 255, 0.14);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 1.3rem;
+        flex-shrink: 0;
+    }
+
+    .env-card-title {
+        font-size: 1.15rem;
+        font-weight: 700;
+        color: #F8FAFC;
+        margin-bottom: 0.3rem;
+    }
+
+    .env-status-pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.3rem;
+        font-size: 0.68rem;
+        font-weight: 600;
+        letter-spacing: 0.5px;
+        padding: 0.15rem 0.55rem;
+        border-radius: 999px;
+    }
+
+    .env-status-pill.active {
+        background: rgba(34, 197, 94, 0.2);
+        color: #4ADE80;
+    }
+
+    .env-status-pill.archive {
+        background: rgba(148, 163, 184, 0.2);
+        color: #CBD5E1;
+    }
+
+    .env-card-desc {
+        color: #94A3B8;
+        font-size: 0.85rem;
+        line-height: 1.5;
+        margin-bottom: 0.9rem;
+    }
+
+    .env-card-features {
+        list-style: none;
+        padding: 0;
+        margin: 0 0 1rem 0;
+    }
+
+    .env-card-features li {
+        color: #CBD5E1;
+        font-size: 0.82rem;
+        padding: 0.2rem 0;
+    }
+
+    /* Archive card's CTA reads as secondary/muted, not a second primary action */
+    .st-key-picker_miniplant .stButton > button {
+        background: transparent !important;
+        color: #CBD5E1 !important;
+        border: 1px solid #64748B !important;
+    }
+
+    .st-key-picker_miniplant .stButton > button:hover {
+        background: #263447 !important;
+        color: #F1F5F9 !important;
+    }
+
+    /* Stat tiles — compact icon + label + value KPI cards (Athena-inspired) */
+    .stat-tile {
+        display: flex;
+        align-items: center;
+        gap: 0.85rem;
+        background: #1E293B;
+        border: 1px solid #334155;
+        border-radius: 8px;
+        padding: 0.9rem 1.1rem;
+        height: 100%;
+    }
+
+    .stat-tile-icon {
+        width: 40px;
+        height: 40px;
+        border-radius: 10px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 1.15rem;
+        flex-shrink: 0;
+    }
+
+    .stat-tile-icon.green { background: rgba(34, 197, 94, 0.16); color: #4ADE80; }
+    .stat-tile-icon.blue { background: rgba(14, 165, 233, 0.16); color: #38BDF8; }
+    .stat-tile-icon.purple { background: rgba(124, 58, 237, 0.16); color: #C4B5FD; }
+    .stat-tile-icon.teal { background: rgba(61, 179, 179, 0.16); color: #5EEAD4; }
+    .stat-tile-icon.amber { background: rgba(245, 158, 11, 0.16); color: #FCD34D; }
+    .stat-tile-icon.red { background: rgba(239, 68, 68, 0.16); color: #FCA5A5; }
+
+    .stat-tile-label {
+        font-size: 0.72rem;
+        color: #94A3B8;
+        text-transform: uppercase;
+        letter-spacing: 0.4px;
+        margin-bottom: 0.15rem;
+        white-space: nowrap;
+    }
+
+    .stat-tile-value {
+        font-size: 1.35rem;
+        font-weight: 700;
+        color: #F1F5F9;
+        line-height: 1.15;
+    }
+
+    .stat-tile-sub {
+        font-size: 0.68rem;
+        color: #94A3B8;
+        margin-top: 0.1rem;
+    }
+
+    /* Quick-navigation cards — now backed by real st.page_link targets */
+    [data-testid="stPageLink"] {
+        border-radius: 6px;
+    }
+
+    [data-testid="stPageLink"] p {
+        font-weight: 600 !important;
+        font-size: 0.95rem !important;
     }
     </style>
     """
