@@ -32,7 +32,14 @@ def load_weekly_df(session, series_filter: str = None) -> pd.DataFrame:
     grid_ef = get_grid_ef(session)
     rows = []
     for w in summaries:
-        series_metrics = get_weekly_metrics_by_series(session, w.start_date, series_filter)
+        # get_weekly_metrics_by_series() queries the cycle table for this
+        # week — only worth that cost when a series filter is actually
+        # active. In the default "All Series" view every field below already
+        # came from `w.*` directly and this result was computed then
+        # discarded, meaning a full per-series cycle query for every
+        # historical week on every single Dashboard/Reports/PDF load, for
+        # nothing.
+        series_metrics = get_weekly_metrics_by_series(session, w.start_date, series_filter) if series_filter else None
 
         if series_filter and series_metrics["cycles"] == 0:
             continue
@@ -140,7 +147,7 @@ def load_weekly_df(session, series_filter: str = None) -> pd.DataFrame:
             "boiler_a_kwh": series_metrics.get("boiler_a_kwh", 0) if series_filter else (w.boiler_a_kwh or 0),
             "boiler_b_kwh": series_metrics.get("boiler_b_kwh", 0) if series_filter else (w.boiler_b_kwh or 0),
             "main_utility_kwh": series_metrics.get("main_utility_kwh", 0) if series_filter else (w.main_utility_kwh or 0),
-            "liquefaction_energy_kwh": series_metrics.get("liquefaction_energy_kwh", 0),
+            "liquefaction_energy_kwh": series_metrics.get("liquefaction_energy_kwh", 0) if series_filter else (w.liquefaction_energy_kwh or 0),
             "total_energy_kwh": total_energy,
             "is_net_positive": net_removal > 0,
         })

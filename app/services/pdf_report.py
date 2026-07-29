@@ -150,11 +150,22 @@ def _ensure_chrome() -> None:
     fix (the programmatic equivalent of running `plotly_get_chrome`): it
     downloads a managed, self-contained Chrome build on first use and skips
     the download on every call after, so this only costs time once per
-    running server process, not once per report."""
+    running server process, not once per report.
+
+    start_sync_server() keeps that one browser alive and reused for every
+    chart render after this. Without it, kaleido's default "one-shot" mode
+    (confirmed in its own source: calc_fig_sync opens a fresh browser context
+    and tears it down per call unless a persistent server is running) means
+    a report with ~5 charts launches and kills Chrome 5 separate times
+    instead of once. Trade-off: the browser now stays resident in memory for
+    the lifetime of the server process instead of only during rendering —
+    worth watching if the hosting tier is memory-constrained.
+    """
     global _chrome_ready
     if _chrome_ready:
         return
     kaleido.get_chrome_sync()
+    kaleido.start_sync_server(silence_warnings=True)
     _chrome_ready = True
 
 
