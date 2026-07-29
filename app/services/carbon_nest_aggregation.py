@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, time, timedelta
 from typing import Optional, Tuple
 
+import streamlit as st
 from sqlalchemy import and_
 
 from app.database.models import CarbonNestCycleData, CarbonNestWeeklySummary, SystemConfig
@@ -83,6 +84,16 @@ def get_grid_ef(session) -> float:
     Miniplant is a frozen historical archive and shouldn't shift when this
     is updated (0.0579 as of 2026-07-29, up from the prior 0.055 figure)."""
     return _get_config_value(session, "carbon_nest_grid_emission_factor", 0.0579)
+
+
+@st.cache_data(ttl=60)
+def get_grid_ef_cached(_session) -> float:
+    """Cached wrapper for read-only display pages. Deliberately NOT used
+    inside create_or_update_weekly_summary() (the Data Entry save path) —
+    a weekly save should always bake in the live, current emission factor,
+    never a possibly-up-to-60s-stale cached one, since that value gets
+    permanently persisted into the stored weekly summary."""
+    return get_grid_ef(_session)
 
 
 def _sum_energy(cycles) -> dict:
@@ -415,3 +426,9 @@ def aggregate_cycles_by_series(session, start_date=None, end_date=None) -> dict:
         "nelion_data": nelion_data,
         "total_cycles": len(cycles),
     }
+
+
+@st.cache_data(ttl=60)
+def aggregate_cycles_by_series_cached(_session, start_date=None, end_date=None) -> dict:
+    """Cached wrapper for the Reports page's Series Comparison tab."""
+    return aggregate_cycles_by_series(_session, start_date, end_date)

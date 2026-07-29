@@ -154,6 +154,18 @@ def load_weekly_df(session, series_filter: str = None) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+@st.cache_data(ttl=60)
+def load_weekly_df_cached(_session, series_filter: str = None) -> pd.DataFrame:
+    """Cached wrapper around load_weekly_df() for read-only display pages
+    (Dashboard, Reports, PDF export) — deliberately NOT used by Data Entry,
+    which needs to see the result of its own imports/saves immediately, not
+    up to 60s later. The leading underscore on `_session` tells Streamlit
+    not to try hashing the SQLAlchemy session for the cache key; caching is
+    keyed on series_filter, which is what actually determines the result.
+    """
+    return load_weekly_df(_session, series_filter)
+
+
 def main() -> None:
     st.set_page_config(page_title="Dashboard - Carbon Nest", page_icon="📊", layout="wide")
     init_db()
@@ -167,7 +179,7 @@ def main() -> None:
 
     session = get_session()
     try:
-        df = load_weekly_df(session, series_filter)
+        df = load_weekly_df_cached(session, series_filter)
     finally:
         session.close()
 

@@ -13,8 +13,8 @@ from app.components.charts import co2_flow_chart, cumulative_chart
 from app.components.sidebar import render_series_filter
 from app.database.connection import get_session, init_db
 from app.database.models import CarbonNestWeeklySummary
-from app.pages.cn_dashboard import load_weekly_df
-from app.services.carbon_nest_aggregation import aggregate_cycles_by_series
+from app.pages.cn_dashboard import load_weekly_df_cached
+from app.services.carbon_nest_aggregation import aggregate_cycles_by_series_cached
 from app.services.carbon_nest_calculations import get_series_display_name
 from app.services.export import weekly_summaries_to_excel
 from app.services.pdf_report import generate_weekly_pdf_report
@@ -36,8 +36,8 @@ def main() -> None:
 
     session = get_session()
     try:
-        df = load_weekly_df(session, series_filter)
-        series_agg = aggregate_cycles_by_series(session)
+        df = load_weekly_df_cached(session, series_filter)
+        series_agg = aggregate_cycles_by_series_cached(session)
     finally:
         session.close()
 

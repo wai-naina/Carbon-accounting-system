@@ -21,7 +21,7 @@ from app.components.sidebar import render_module_filter
 from app.database.connection import get_session, init_db
 from app.database.models import CarbonNestCycleData, CarbonNestWeeklySummary, WeeklySummary
 from app.services.carbon_nest_aggregation import get_carbon_nest_week_bounds
-from app.services.carbon_nest_working_capacity import weekly_working_capacity
+from app.services.carbon_nest_working_capacity import weekly_working_capacity_cached
 
 
 def render_system_picker() -> None:
@@ -283,7 +283,7 @@ def render_carbon_nest_home() -> None:
             .order_by(CarbonNestCycleData.start_time.desc())
             .first()
         )
-        working_capacity = weekly_working_capacity(session, latest_cycle.start_time) if latest_cycle else None
+        working_capacity = weekly_working_capacity_cached(session, latest_cycle.start_time) if latest_cycle else None
 
         live_cycles = []
         if latest_cycle:

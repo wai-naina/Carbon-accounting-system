@@ -26,6 +26,8 @@ from datetime import datetime
 from statistics import mean
 from typing import Optional
 
+import streamlit as st
+
 from app.database.models import CarbonNestCycleData, CarbonNestSorbentConfig
 from app.services.carbon_nest_aggregation import get_carbon_nest_week_bounds
 
@@ -148,3 +150,9 @@ def weekly_working_capacity(session, reference: datetime) -> dict:
         }
 
     return {"week_start": week_start, "week_end": week_end, "groups": groups}
+
+
+@st.cache_data(ttl=60)
+def weekly_working_capacity_cached(_session, reference: datetime) -> dict:
+    """Cached wrapper for the Home page and PDF report."""
+    return weekly_working_capacity(_session, reference)

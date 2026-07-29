@@ -4,9 +4,9 @@ Renders the same headline numbers as the live Home/Dashboard pages — Capture &
 Removal Efficiency, the emissions/energy breakdown, and recent-week trend context —
 as a standalone, downloadable PDF someone can forward, print, or archive.
 
-All figures are pulled straight from `load_weekly_df` (the exact same function the
-live Dashboard uses), so this report can never silently drift out of sync with what
-the app shows on screen.
+All figures are pulled straight from `load_weekly_df` (via its cached wrapper —
+the exact same function the live Dashboard uses), so this report can never
+silently drift out of sync with what the app shows on screen.
 """
 from __future__ import annotations
 
@@ -46,9 +46,9 @@ from app.components.charts import (
     waterfall_chart,
 )
 from app.database.models import CarbonNestWeeklySummary
-from app.pages.cn_dashboard import load_weekly_df
-from app.services.carbon_nest_aggregation import get_grid_ef, get_weekly_metrics_by_series
-from app.services.carbon_nest_working_capacity import weekly_working_capacity
+from app.pages.cn_dashboard import load_weekly_df_cached
+from app.services.carbon_nest_aggregation import get_grid_ef_cached, get_weekly_metrics_by_series
+from app.services.carbon_nest_working_capacity import weekly_working_capacity_cached
 
 # --- Print-safe brand palette -------------------------------------------------
 # The live app's neon greens/reds/teals are tuned for a dark screen background;
@@ -377,16 +377,16 @@ def generate_weekly_pdf_report(session, week_start: datetime, series_filter: Opt
 
     Returns raw PDF bytes, ready for st.download_button.
     """
-    df = load_weekly_df(session, series_filter)
+    df = load_weekly_df_cached(session, series_filter)
     if df.empty:
         raise ValueError("No Carbon Nest weekly summaries available to report on.")
     matches = df[df["start_date"] == week_start]
     if matches.empty:
         raise ValueError(f"No weekly summary found for week starting {week_start}.")
     row = matches.iloc[0]
-    wc = weekly_working_capacity(session, week_start)
+    wc = weekly_working_capacity_cached(session, week_start)
 
-    grid_ef = get_grid_ef(session)
+    grid_ef = get_grid_ef_cached(session)
     s1n3 = get_weekly_metrics_by_series(session, week_start, "1n3")
     s2n4 = get_weekly_metrics_by_series(session, week_start, "2n4")
 
