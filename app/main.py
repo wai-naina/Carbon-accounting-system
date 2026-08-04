@@ -1,5 +1,6 @@
 """Octavia Carbon Accounting System - Main Entry Point."""
 import sys
+from datetime import datetime
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -283,7 +284,22 @@ def render_carbon_nest_home() -> None:
             .order_by(CarbonNestCycleData.start_time.desc())
             .first()
         )
-        working_capacity = weekly_working_capacity_cached(session, latest_cycle.start_time) if latest_cycle else None
+
+        # Working capacity is a weekly-report metric, so anchor it on the most
+        # recent COMPLETED Carbon Nest week (Sat-18:00 boundary), not on the
+        # week containing the newest cycle: an export taken just after the
+        # Saturday rollover carries the first cycle or two of a brand-new week,
+        # and averaging those would present a 1-cycle figure as "the week".
+        # Falls back to the in-progress week only when no completed week has
+        # any cycles yet (fresh deployment).
+        current_week_start, _ = get_carbon_nest_week_bounds(datetime.now())
+        wc_anchor_cycle = (
+            session.query(CarbonNestCycleData)
+            .filter(CarbonNestCycleData.start_time < current_week_start)
+            .order_by(CarbonNestCycleData.start_time.desc())
+            .first()
+        ) or latest_cycle
+        working_capacity = weekly_working_capacity_cached(session, wc_anchor_cycle.start_time) if wc_anchor_cycle else None
 
         live_cycles = []
         if latest_cycle:
@@ -298,7 +314,18 @@ def render_carbon_nest_home() -> None:
             )
         live_ads = sum(c.ads_co2_kg or 0 for c in live_cycles)
         live_bag = sum(c.bag_co2_kg or 0 for c in live_cycles)
+        live_steam = sum(c.steam_kg or 0 for c in live_cycles)
         collection_efficiency = (live_bag / live_ads * 100) if live_ads > 0 else None
+
+        # Steam intensity (kg steam per tonne CO2 captured) needs the weekly
+        # gross-captured figure, so like liquefaction efficiency it comes from
+        # the most recently CALCULATED week rather than the live cycles.
+        if latest_summary and latest_summary.gross_captured_kg:
+            steam_intensity = (
+                (latest_summary.total_steam_kg or 0) / (latest_summary.gross_captured_kg / 1000)
+            )
+        else:
+            steam_intensity = None
 
         # Liquefaction is only ever recorded at the weekly-summary level (a manual
         # entry, not per-cycle), so unlike collection efficiency this can't be
@@ -319,12 +346,14 @@ def render_carbon_nest_home() -> None:
             func.sum(CarbonNestWeeklySummary.liquefied_co2_kg),
             func.sum(CarbonNestWeeklySummary.total_emissions_kg),
             func.sum(CarbonNestWeeklySummary.net_removal_kg),
+            func.sum(CarbonNestWeeklySummary.total_steam_kg),
         ).first()
 
         total_bag = (cumulative[0] or 0) if cumulative else 0
         total_liquefied = (cumulative[1] or 0) if cumulative else 0
         total_emissions = (cumulative[2] or 0) if cumulative else 0
         total_net = (cumulative[3] or 0) if cumulative else 0
+        total_steam = (cumulative[4] or 0) if cumulative else 0
     finally:
         session.close()
 
@@ -422,6 +451,40 @@ def render_carbon_nest_home() -> None:
             unsafe_allow_html=True,
         )
 
+    # --- Desorption steam: the input that releases captured CO2 from the
+    # sorbent bed. Steam Used reflects this week's live cycles (like Collection
+    # Efficiency); Steam Intensity reflects the most recently calculated week
+    # (it needs the weekly gross-captured denominator, like Liquefaction
+    # Efficiency); Total Steam is cumulative across all tracked weeks.
+    steam_col1, steam_col2, steam_col3 = st.columns(3)
+    with steam_col1:
+        st.markdown(
+            render_stat_tile(
+                "💨", "blue", "Steam Used",
+                f"{live_steam:,.0f} kg",
+                "Desorption steam, this week's cycles",
+            ),
+            unsafe_allow_html=True,
+        )
+    with steam_col2:
+        st.markdown(
+            render_stat_tile(
+                "🌡️", "amber", "Steam Intensity",
+                f"{steam_intensity:,.0f} kg/t CO₂" if steam_intensity else "—",
+                "Steam per tonne captured, latest calculated week",
+            ),
+            unsafe_allow_html=True,
+        )
+    with steam_col3:
+        st.markdown(
+            render_stat_tile(
+                "♨️", "teal", "Total Steam Used",
+                f"{total_steam:,.0f} kg",
+                "Cumulative across all tracked weeks",
+            ),
+            unsafe_allow_html=True,
+        )
+
     if total_weeks:
         st.caption(
             f"Cumulative across {total_weeks} tracked week{'s' if total_weeks != 1 else ''}: "
@@ -440,11 +503,18 @@ def render_carbon_nest_home() -> None:
     # reproducing an existing hand-calculated report. Not a percentage, not
     # normalised for hold time — see weekly_working_capacity() docstrings.
     st.markdown('<h2 class="section-header">🧪 Sorbent Working Capacity</h2>', unsafe_allow_html=True)
-    st.caption(
+    wc_caption = (
         "Desorption-based sorbent capacity — mol CO&#8322; released per m&#179; of bed, "
-        "averaged across this week's valid cycles. Not adsorption uptake, not normalised "
-        "for hold time."
+        "averaged across the reporting week's valid cycles. Not adsorption uptake, not "
+        "normalised for hold time."
     )
+    if working_capacity:
+        wc_caption += (
+            f" Reporting week: {working_capacity['week_start'].strftime('%b %d, %H:%M')} → "
+            f"{working_capacity['week_end'].strftime('%b %d, %Y %H:%M')} "
+            "(most recent completed week with cycle data)."
+        )
+    st.caption(wc_caption)
     if not working_capacity:
         st.markdown('<div class="info-box warning">📭 <strong>No cycle data yet.</strong> Import cycles in Data Entry to see working capacity.</div>', unsafe_allow_html=True)
     else:
@@ -454,7 +524,10 @@ def render_carbon_nest_home() -> None:
                 group = working_capacity["groups"][group_key]
                 capacity = group["avg_working_capacity_mol_per_m3"]
                 value_str = f"{capacity:.2f} mol/m³" if capacity is not None else "—"
-                sub = f"{group['n_cycles_used']} of {group['n_cycles_in_window']} cycles this week"
+                sub = (
+                    f"{group['n_cycles_used']} of {group['n_cycles_in_window']} cycles · "
+                    f"week of {working_capacity['week_start'].strftime('%b %d')}"
+                )
                 st.markdown(
                     render_stat_tile(
                         "🧪", "teal" if group_key == "A" else "purple",
