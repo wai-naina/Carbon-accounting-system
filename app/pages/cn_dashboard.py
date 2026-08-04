@@ -53,6 +53,7 @@ def load_weekly_df(session, series_filter: str = None) -> pd.DataFrame:
             total_cycles = series_metrics["cycles"]
             thermal_energy = series_metrics["thermal_kwh"]
             auxiliary_energy = series_metrics["auxiliary_kwh"]
+            steam_kg = series_metrics["steam_kg"]
 
             # Liquefaction is a single shared, plant-level downstream process —
             # it can't be honestly attributed back to one series. Prorating a
@@ -77,9 +78,14 @@ def load_weekly_df(session, series_filter: str = None) -> pd.DataFrame:
             total_cycles = w.total_cycles or 0
             thermal_energy = w.thermal_energy_kwh or 0
             auxiliary_energy = w.auxiliary_energy_kwh or 0
+            steam_kg = w.total_steam_kg or 0
 
         collected_co2 = liq if liq > 0 else bag
         energy_intensity = (process_energy / (collected_co2 / 1000)) if (collected_co2 > 0 and process_energy > 0) else 0
+        # Steam intensity mirrors the energy-intensity convention: per tonne of
+        # collected CO2 (liquefied when available, else bag) — same denominator,
+        # so the two figures are directly comparable week to week.
+        steam_intensity = (steam_kg / (collected_co2 / 1000)) if (collected_co2 > 0 and steam_kg > 0) else 0
 
         loss_stage_1 = ads - des
         loss_stage_2 = des - bag
@@ -149,6 +155,8 @@ def load_weekly_df(session, series_filter: str = None) -> pd.DataFrame:
             "main_utility_kwh": series_metrics.get("main_utility_kwh", 0) if series_filter else (w.main_utility_kwh or 0),
             "liquefaction_energy_kwh": series_metrics.get("liquefaction_energy_kwh", 0) if series_filter else (w.liquefaction_energy_kwh or 0),
             "total_energy_kwh": total_energy,
+            "total_steam_kg": steam_kg,
+            "steam_intensity_kg_per_tonne": steam_intensity,
             "is_net_positive": net_removal > 0,
         })
     return pd.DataFrame(rows)
@@ -296,6 +304,32 @@ def main() -> None:
                 "growing out of proportion to the others is worth a second look."
             )
 
+    st.markdown("### 💨 Desorption Steam")
+    steam_col1, steam_col2 = st.columns(2)
+    with steam_col1:
+        st.markdown(
+            render_stat_tile(
+                "💨", "blue", "Steam Used",
+                f"{selected_week['total_steam_kg']:,.0f} kg",
+                "Desorption steam, selected week",
+            ),
+            unsafe_allow_html=True,
+        )
+    with steam_col2:
+        st.markdown(
+            render_stat_tile(
+                "🌡️", "amber", "Steam Intensity",
+                f"{selected_week['steam_intensity_kg_per_tonne']:,.0f} kg/t CO₂"
+                if selected_week["steam_intensity_kg_per_tonne"] else "—",
+                "Steam per tonne captured — same denominator as energy intensity",
+            ),
+            unsafe_allow_html=True,
+        )
+    st.caption(
+        "Steam is what releases the captured CO₂ from the sorbent bed during desorption — "
+        "it's the main driver of Boiler A/B energy above."
+    )
+
     st.markdown("### 📉 Loss Analysis")
     loss_col1, loss_col2 = st.columns(2)
     with loss_col1:
@@ -322,15 +356,15 @@ def main() -> None:
     display_df = df.tail(12).copy()
     display_df = display_df[[
         "week_label", "total_cycles", "total_ads_co2_kg", "total_des_co2_kg",
-        "total_bag_co2_kg", "liquefied_co2_kg", "total_loss_kg",
+        "total_bag_co2_kg", "liquefied_co2_kg", "total_steam_kg", "total_loss_kg",
         "total_emissions_kg", "net_removal_kg", "is_net_positive",
     ]]
     display_df.columns = [
         "Week", "Cycles", "Adsorbed", "Desorbed", "Collected", "Liquefied",
-        "Losses", "Emissions", "Net Removal", "Status",
+        "Steam", "Losses", "Emissions", "Net Removal", "Status",
     ]
     display_df["Status"] = display_df["Status"].apply(lambda x: "✅ Positive" if x else "❌ Negative")
-    for col in ["Adsorbed", "Desorbed", "Collected", "Liquefied", "Losses", "Emissions", "Net Removal"]:
+    for col in ["Adsorbed", "Desorbed", "Collected", "Liquefied", "Steam", "Losses", "Emissions", "Net Removal"]:
         display_df[col] = display_df[col].apply(lambda x: f"{x:.1f} kg")
     st.dataframe(display_df.sort_values("Week", ascending=False), width="stretch", hide_index=True)
 

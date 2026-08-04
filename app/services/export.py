@@ -23,6 +23,7 @@ def weekly_summaries_to_excel(weekly_summaries: List[WeeklySummary]) -> bytes:
                 "Net Removal (kg)": w.net_removal_kg,
                 "Net Positive": w.is_net_positive,
                 "Total Energy (kWh)": w.total_energy_kwh,
+                "Total Steam (kg)": w.total_steam_kg,
                 "Energy Intensity (kWh/tCO2)": w.energy_intensity_kwh_per_tonne,
             }
         )

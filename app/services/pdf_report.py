@@ -481,6 +481,37 @@ def generate_weekly_pdf_report(session, week_start: datetime, series_filter: Opt
     story.append(KeepTogether(wc_block))
     story.append(Spacer(1, 6 * mm))
 
+    # --- Desorption steam ---
+    steam_kg = row.get("total_steam_kg", 0) or 0
+    if steam_kg > 0:
+        steam_intensity = row.get("steam_intensity_kg_per_tonne", 0) or 0
+        steam_block = [
+            Paragraph("Desorption Steam", styles["h2"]),
+            Paragraph(
+                "Steam is what releases the captured CO&#8322; from the sorbent bed during the "
+                "desorption half-cycle — the main driver of Boiler A/B energy below. Intensity "
+                "uses the same per-tonne-captured denominator as Energy Intensity.",
+                styles["chart_caption"],
+            ),
+        ]
+        steam_cards = [
+            _kpi_card(
+                "Steam Used", f"{steam_kg:,.0f} kg",
+                f"1n3: {s1n3['steam_kg']:,.0f} kg · 2n4: {s2n4['steam_kg']:,.0f} kg",
+                "#0EA5E9", styles,
+            ),
+            _kpi_card(
+                "Steam Intensity",
+                f"{steam_intensity:,.0f} kg/t" if steam_intensity else "—",
+                "kg steam per tonne CO&#8322; captured", "#F59E0B", styles,
+            ),
+        ]
+        steam_row = Table([steam_cards], colWidths=[80 * mm] * 2)
+        steam_row.setStyle(TableStyle([("LEFTPADDING", (0, 0), (-1, -1), 3), ("RIGHTPADDING", (0, 0), (-1, -1), 3)]))
+        steam_block.append(steam_row)
+        story.append(KeepTogether(steam_block))
+        story.append(Spacer(1, 6 * mm))
+
     # --- Carbon balance waterfall ---
     # Each heading is kept together with its own first chart/paragraph (KeepTogether)
     # so a page break can never strand a heading alone at the bottom of a page with
