@@ -14,7 +14,11 @@ from app.auth.authorization import require_admin
 from app.components.branding import get_brand_css, render_logo
 from app.database.connection import get_session, init_db
 from app.database.models import CarbonNestWeeklySummary, CarbonNestCycleData
-from app.services.carbon_nest_aggregation import create_or_update_weekly_summary, list_week_options
+from app.services.carbon_nest_aggregation import (
+    create_or_update_weekly_summary,
+    get_filtered_cycles,
+    list_week_options,
+)
 from app.services.carbon_nest_calculations import get_series_display_name, safe_value
 from app.services.carbon_nest_import import (
     import_cycles,
@@ -184,11 +188,9 @@ def main() -> None:
 
         session = get_session()
         try:
-            cycles_in_week = (
-                session.query(CarbonNestCycleData)
-                .filter(CarbonNestCycleData.start_time >= week_start, CarbonNestCycleData.start_time < week_end)
-                .all()
-            )
+            # Cycles that COMPLETED in this week — the same set the weekly
+            # summary will store, so this preview always matches what gets saved.
+            cycles_in_week = get_filtered_cycles(session, week_start, week_end)
 
             if cycles_in_week:
                 ads_sum = sum(safe_value(c.ads_co2_kg) for c in cycles_in_week)
@@ -197,6 +199,17 @@ def main() -> None:
                 total_kwh_sum = sum(safe_value(c.total_kwh) for c in cycles_in_week)
 
                 st.success(f"✅ Found **{len(cycles_in_week)}** cycles in this week")
+
+                spillover = [
+                    c for c in cycles_in_week
+                    if c.end_time and c.start_time < week_start <= c.end_time
+                ]
+                if spillover:
+                    st.caption(
+                        "↪️ Carried in from the previous week (started before the "
+                        "18:00 rollover, completed after it): "
+                        + " · ".join(f"cycle {c.cycle_number}" for c in spillover)
+                    )
 
                 series_counts: dict = {}
                 for c in cycles_in_week:

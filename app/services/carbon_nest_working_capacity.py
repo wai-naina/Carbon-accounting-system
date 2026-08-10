@@ -29,7 +29,7 @@ from typing import Optional
 import streamlit as st
 
 from app.database.models import CarbonNestCycleData, CarbonNestSorbentConfig
-from app.services.carbon_nest_aggregation import get_carbon_nest_week_bounds
+from app.services.carbon_nest_aggregation import get_carbon_nest_week_bounds, get_filtered_cycles
 
 M_CO2_KG_PER_MOL = 0.04401
 MIN_DES_CO2_KG_FOR_VALIDITY = 1.0  # documented interim heuristic, not a physical truth — see brief
@@ -124,14 +124,10 @@ def weekly_working_capacity(session, reference: datetime) -> dict:
     """Group A / Group B average sorbent working capacity (mol CO2/m3) for the
     Carbon Nest week containing `reference`."""
     week_start, week_end = get_carbon_nest_week_bounds(reference)
-    cycles = (
-        session.query(CarbonNestCycleData)
-        .filter(
-            CarbonNestCycleData.start_time >= week_start,
-            CarbonNestCycleData.start_time < week_end,
-        )
-        .all()
-    )
+    # Cycles that completed in this week — the same membership rule as every
+    # other Carbon Nest weekly metric, so a cycle's capacity is averaged into
+    # the same week its CO2 and energy are reported in.
+    cycles = get_filtered_cycles(session, week_start, week_end)
 
     groups = {}
     for g in ("A", "B"):

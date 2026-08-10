@@ -4,7 +4,7 @@ from datetime import datetime, time, timedelta
 from typing import Optional, Tuple
 
 import streamlit as st
-from sqlalchemy import and_
+from sqlalchemy import and_, or_
 
 from app.database.models import CarbonNestCycleData, CarbonNestWeeklySummary, SystemConfig
 from app.services.carbon_nest_calculations import calculate_weekly_metrics, safe_value
@@ -59,10 +59,53 @@ def get_series_filter() -> Optional[str]:
         return None
 
 
-def get_filtered_cycles(session, start_dt: datetime, end_dt: datetime, series_filter: Optional[str] = None) -> list:
-    query = session.query(CarbonNestCycleData).filter(
-        and_(CarbonNestCycleData.start_time >= start_dt, CarbonNestCycleData.start_time < end_dt)
+def cycle_week_timestamp(cycle):
+    """The timestamp that decides which Carbon Nest week a cycle belongs to.
+
+    A cycle counts toward the week in which it **completed**, matching Athena's
+    own weekly figure. A cycle running 17:12 -> 19:32 across the Saturday 18:00
+    rollover therefore belongs wholly to the new week: the closing week reports
+    90 cycles rather than 91, and the spillover cycle is picked up by the
+    following week. Cycles are never split — there is no such thing as half a
+    cycle, and every physical quantity on the row (CO2, kWh, steam) stays whole
+    and attached to exactly one week.
+
+    Note this differs from Athena's *Plant Cycles* CSV export, which windows by
+    Start Time — that export will hand you a straddling cycle in the closing
+    week's file even though it belongs to the next week. The weekly report
+    number is the one CAS matches, so import wide and let this do the bucketing.
+
+    Falls back to Start Time only when End Time is missing (a truncated or
+    in-progress export row), since there is nothing better to key off.
+    """
+    return cycle.end_time or cycle.start_time
+
+
+def completed_in_window(start_dt: datetime, end_dt: datetime):
+    """SQL predicate for "this cycle completed inside [start_dt, end_dt)".
+
+    Mirrors cycle_week_timestamp() in the database: End Time decides, with Start
+    Time standing in only for rows that have no End Time.
+    """
+    return or_(
+        and_(
+            CarbonNestCycleData.end_time.isnot(None),
+            CarbonNestCycleData.end_time >= start_dt,
+            CarbonNestCycleData.end_time < end_dt,
+        ),
+        and_(
+            CarbonNestCycleData.end_time.is_(None),
+            CarbonNestCycleData.start_time >= start_dt,
+            CarbonNestCycleData.start_time < end_dt,
+        ),
     )
+
+
+def get_filtered_cycles(
+    session, start_dt: datetime, end_dt: datetime, series_filter: Optional[str] = None
+) -> list:
+    """Every cycle that completed in [start_dt, end_dt), optionally one series."""
+    query = session.query(CarbonNestCycleData).filter(completed_in_window(start_dt, end_dt))
     if series_filter:
         query = query.filter(CarbonNestCycleData.series == series_filter)
     return query.all()
@@ -151,11 +194,10 @@ def create_or_update_weekly_summary(
 ) -> CarbonNestWeeklySummary:
     week_start, week_end = get_carbon_nest_week_bounds(week_start)
 
-    cycles = (
-        session.query(CarbonNestCycleData)
-        .filter(and_(CarbonNestCycleData.start_time >= week_start, CarbonNestCycleData.start_time < week_end))
-        .all()
-    )
+    # Cycles that COMPLETED in this week — see cycle_week_timestamp(). One cycle
+    # belongs to exactly one week, whole, so the count, the FK back-reference and
+    # every summed quantity below all agree on the same set of rows.
+    cycles = get_filtered_cycles(session, week_start, week_end)
 
     ads_co2 = sum(safe_value(c.ads_co2_kg) for c in cycles)
     des_co2 = sum(safe_value(c.des_co2_kg) for c in cycles)

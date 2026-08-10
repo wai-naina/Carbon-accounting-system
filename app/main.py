@@ -10,6 +10,8 @@ APP_DIR = Path(__file__).resolve().parent
 
 import streamlit as st
 
+from sqlalchemy import func as sa_func
+
 from app.auth.authentication import logout, require_login
 from app.components.branding import (
     render_logo,
@@ -21,7 +23,11 @@ from app.components.branding import (
 from app.components.sidebar import render_module_filter
 from app.database.connection import get_session, init_db
 from app.database.models import CarbonNestCycleData, CarbonNestWeeklySummary, WeeklySummary
-from app.services.carbon_nest_aggregation import get_carbon_nest_week_bounds
+from app.services.carbon_nest_aggregation import (
+    cycle_week_timestamp,
+    get_carbon_nest_week_bounds,
+    get_filtered_cycles,
+)
 from app.services.carbon_nest_working_capacity import weekly_working_capacity_cached
 
 
@@ -279,9 +285,13 @@ def render_carbon_nest_home() -> None:
             .first()
         )
 
+        # A cycle belongs to the week it COMPLETED in, so "newest" and "which
+        # week is this in" both key off End Time (falling back to Start Time for
+        # rows with no End Time) — see cycle_week_timestamp().
+        completed_at = sa_func.coalesce(CarbonNestCycleData.end_time, CarbonNestCycleData.start_time)
         latest_cycle = (
             session.query(CarbonNestCycleData)
-            .order_by(CarbonNestCycleData.start_time.desc())
+            .order_by(completed_at.desc())
             .first()
         )
 
@@ -295,23 +305,20 @@ def render_carbon_nest_home() -> None:
         current_week_start, _ = get_carbon_nest_week_bounds(datetime.now())
         wc_anchor_cycle = (
             session.query(CarbonNestCycleData)
-            .filter(CarbonNestCycleData.start_time < current_week_start)
-            .order_by(CarbonNestCycleData.start_time.desc())
+            .filter(completed_at < current_week_start)
+            .order_by(completed_at.desc())
             .first()
         ) or latest_cycle
-        working_capacity = weekly_working_capacity_cached(session, wc_anchor_cycle.start_time) if wc_anchor_cycle else None
+        working_capacity = (
+            weekly_working_capacity_cached(session, cycle_week_timestamp(wc_anchor_cycle))
+            if wc_anchor_cycle
+            else None
+        )
 
         live_cycles = []
         if latest_cycle:
-            week_start, week_end = get_carbon_nest_week_bounds(latest_cycle.start_time)
-            live_cycles = (
-                session.query(CarbonNestCycleData)
-                .filter(
-                    CarbonNestCycleData.start_time >= week_start,
-                    CarbonNestCycleData.start_time < week_end,
-                )
-                .all()
-            )
+            week_start, week_end = get_carbon_nest_week_bounds(cycle_week_timestamp(latest_cycle))
+            live_cycles = get_filtered_cycles(session, week_start, week_end)
         live_ads = sum(c.ads_co2_kg or 0 for c in live_cycles)
         live_bag = sum(c.bag_co2_kg or 0 for c in live_cycles)
         live_steam = sum(c.steam_kg or 0 for c in live_cycles)
