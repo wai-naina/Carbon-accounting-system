@@ -17,19 +17,27 @@ from app.components.charts import (
     loss_analysis_chart,
     waterfall_chart,
 )
-from app.components.sidebar import render_series_filter
+from app.components.sidebar import render_energy_scenario, render_series_filter
 from app.database.connection import get_session, init_db
 from app.database.models import CarbonNestWeeklySummary
 from app.services.carbon_nest_aggregation import get_grid_ef, get_weekly_metrics_by_series
 
 
-def load_weekly_df(session, series_filter: str = None) -> pd.DataFrame:
+def load_weekly_df(session, series_filter: str = None, ef_override: float = None) -> pd.DataFrame:
+    """Weekly Carbon Nest metrics, recomputed from stored energy and CO2 figures.
+
+    `ef_override` (kg CO2e/kWh) swaps in a hypothetical grid emission factor for
+    the "what if we ran this on a cleaner supply" view, instead of the saved
+    carbon_nest_grid_emission_factor. It only affects what this function returns
+    — no writes, no effect on the stored summaries — so callers that want
+    actuals (Reports, the PDF export) simply omit it.
+    """
     summaries = (
         session.query(CarbonNestWeeklySummary)
         .order_by(CarbonNestWeeklySummary.start_date)
         .all()
     )
-    grid_ef = get_grid_ef(session)
+    grid_ef = get_grid_ef(session) if ef_override is None else ef_override
     rows = []
     for w in summaries:
         # get_weekly_metrics_by_series() queries the cycle table for this
@@ -163,15 +171,72 @@ def load_weekly_df(session, series_filter: str = None) -> pd.DataFrame:
 
 
 @st.cache_data(ttl=60)
-def load_weekly_df_cached(_session, series_filter: str = None) -> pd.DataFrame:
+def load_weekly_df_cached(_session, series_filter: str = None, ef_override: float = None) -> pd.DataFrame:
     """Cached wrapper around load_weekly_df() for read-only display pages
     (Dashboard, Reports, PDF export) — deliberately NOT used by Data Entry,
     which needs to see the result of its own imports/saves immediately, not
     up to 60s later. The leading underscore on `_session` tells Streamlit
     not to try hashing the SQLAlchemy session for the cache key; caching is
-    keyed on series_filter, which is what actually determines the result.
+    keyed on series_filter and ef_override, which are what actually determine
+    the result — so flipping between supply scenarios (or back to actuals)
+    re-uses each frame rather than recomputing it every rerun.
     """
-    return load_weekly_df(_session, series_filter)
+    return load_weekly_df(_session, series_filter, ef_override)
+
+
+def removal_efficiency_pct(row) -> float:
+    """Net removal as a share of gross captured — the Home-page headline figure.
+
+    Recomputed from the row rather than read from storage so it follows whatever
+    supply scenario the row was built at. Returns None when nothing was
+    captured, since the ratio is undefined rather than 0%.
+    """
+    captured = row["collected_co2_kg"] or 0
+    if captured <= 0:
+        return None
+    return row["net_removal_kg"] / captured * 100
+
+
+def breakeven_ef_g_per_kwh(row) -> float:
+    """Grid EF at which this week would exactly break even, in g CO2e/kWh.
+
+    Embodied is charged per tonne captured and doesn't move with the EF, so the
+    headroom left for energy is (captured - embodied). A negative result means
+    embodied alone already exceeds what was captured — no supply, however clean,
+    breaks that week even — and is returned as-is for the caller to flag.
+    """
+    energy = row["total_energy_kwh"] or 0
+    if energy <= 0:
+        return None
+    headroom = (row["collected_co2_kg"] or 0) - (row["total_embodied_emissions_kg"] or 0)
+    return headroom / energy * 1000
+
+
+def breakeven_intensity_kwh_per_t(row, ef: float) -> float:
+    """Total-energy intensity this week would need to break even at `ef`.
+
+    Deliberately on a TOTAL-energy basis (Main Utility and liquefaction
+    included), because that's what operational emissions are charged on — unlike
+    the energy_intensity_kwh_per_tonne KPI shown elsewhere on this page, which
+    is process-only to match SCADA's convention. Compare it against
+    actual_intensity_kwh_per_t(), never against that KPI.
+    """
+    captured = row["collected_co2_kg"] or 0
+    if captured <= 0 or ef <= 0:
+        return None
+    embodied_share = (row["total_embodied_emissions_kg"] or 0) / captured
+    if embodied_share >= 1:
+        return None
+    return (1 - embodied_share) / ef * 1000
+
+
+def actual_intensity_kwh_per_t(row) -> float:
+    """This week's total-energy intensity — the like-for-like comparison for
+    breakeven_intensity_kwh_per_t()."""
+    captured = row["collected_co2_kg"] or 0
+    if captured <= 0:
+        return None
+    return (row["total_energy_kwh"] or 0) / (captured / 1000)
 
 
 def main() -> None:
@@ -187,12 +252,29 @@ def main() -> None:
 
     session = get_session()
     try:
-        df = load_weekly_df_cached(session, series_filter)
+        configured_ef = get_grid_ef(session)
+        scenario_ef, scenario_label, is_scenario = render_energy_scenario(configured_ef)
+        df = load_weekly_df_cached(session, series_filter, scenario_ef)
+        # Only pay for the second frame when a scenario is actually selected —
+        # it exists purely to show "vs actuals" alongside the hypothetical.
+        actual_df = load_weekly_df_cached(session, series_filter, configured_ef) if is_scenario else df
     finally:
         session.close()
 
     st.title("📊 Carbon Nest — Carbon Accounting Dashboard")
     st.caption("Output-based embodied emissions (v0.6 LCA) · fully separate from Miniplant 2.0 history")
+
+    if is_scenario:
+        st.markdown(f"""
+        <div class="info-box warning">
+            🔌 <strong>What-if supply: {scenario_label}</strong> (configured:
+            {configured_ef * 1000:,.1f} g/kWh). Every emissions, net-removal and
+            efficiency figure on this page is recomputed at that factor —
+            <strong>these are not the reported actuals.</strong> Nothing is saved; the Home
+            page, Reports and the PDF export continue to show the configured factor.
+            Switch back to <em>As configured</em> in the sidebar to leave the scenario.
+        </div>
+        """, unsafe_allow_html=True)
 
     if df.empty:
         st.warning("⚠️ No weekly summaries yet.")
@@ -266,6 +348,144 @@ def main() -> None:
             ),
             unsafe_allow_html=True,
         )
+
+    st.divider()
+    st.markdown('<h2 class="section-header">🔌 Removal Efficiency vs Energy Supply</h2>', unsafe_allow_html=True)
+    st.caption(
+        "Removal efficiency is net removal ÷ gross captured — the same headline the Home page "
+        "leads with, recomputed here at whichever supply is selected in the sidebar. It answers "
+        "how much of the gap to net-positive a cleaner grid actually closes, and how much is "
+        "left for energy intensity and embodied to close."
+    )
+
+    week_eff = removal_efficiency_pct(selected_week)
+    if week_eff is None:
+        st.info("No CO₂ captured in the selected week — removal efficiency is undefined for it.")
+    else:
+        eff_color = "#22C55E" if week_eff > 0 else "#EF4444"
+        # Efficiency at a zero-carbon supply: the best this week could ever do,
+        # since output-based embodied is charged per tonne captured regardless of
+        # how the plant is powered.
+        embodied_share = (selected_week["total_embodied_emissions_kg"] or 0) / selected_week["collected_co2_kg"]
+        ceiling_eff = (1 - embodied_share) * 100
+        be_ef = breakeven_ef_g_per_kwh(selected_week)
+        be_intensity = breakeven_intensity_kwh_per_t(selected_week, scenario_ef)
+        actual_intensity = actual_intensity_kwh_per_t(selected_week)
+
+        eff_hero, eff_t1, eff_t2, eff_t3 = st.columns([2, 1, 1, 1])
+        with eff_hero:
+            st.markdown(
+                render_hero_metric(
+                    "REMOVAL EFFICIENCY",
+                    f"{week_eff:+.1f}%",
+                    eff_color,
+                    f"Week of {selected_week['start_date'].strftime('%b %d')} &middot; at "
+                    f"{scenario_label}{' (what-if)' if is_scenario else ' (as configured)'}",
+                ),
+                unsafe_allow_html=True,
+            )
+        with eff_t1:
+            if is_scenario:
+                actual_week_eff = removal_efficiency_pct(actual_df.iloc[selected_idx])
+                delta = week_eff - (actual_week_eff or 0)
+                st.markdown(
+                    render_stat_tile(
+                        "📌", "teal", "As Configured",
+                        f"{actual_week_eff:+.1f}%" if actual_week_eff is not None else "—",
+                        f"{delta:+.1f} pp from this scenario",
+                    ),
+                    unsafe_allow_html=True,
+                )
+            else:
+                st.markdown(
+                    render_stat_tile(
+                        "🧱", "purple", "Ceiling at 0 g/kWh", f"{ceiling_eff:+.1f}%",
+                        "Embodied alone caps it here",
+                    ),
+                    unsafe_allow_html=True,
+                )
+        with eff_t2:
+            st.markdown(
+                render_stat_tile(
+                    "⚖️", "amber", "Break-even EF",
+                    f"{be_ef:,.1f} g/kWh" if be_ef is not None and be_ef >= 0 else "unreachable",
+                    "Supply needed for 0% this week" if be_ef is not None and be_ef >= 0
+                    else "Embodied exceeds capture",
+                ),
+                unsafe_allow_html=True,
+            )
+        with eff_t3:
+            if scenario_ef <= 0:
+                # At a zero-carbon supply energy costs nothing, so there's no
+                # intensity threshold to hit — embodied is the only constraint.
+                intensity_value, intensity_sub = "no limit", "Energy is free of CO₂ at 0 g/kWh"
+            elif be_intensity is None:
+                intensity_value, intensity_sub = "unreachable", "Embodied exceeds capture"
+            else:
+                intensity_value = f"{be_intensity:,.0f} kWh/t"
+                intensity_sub = f"at {scenario_label} · actual {actual_intensity:,.0f} kWh/t"
+            st.markdown(
+                render_stat_tile("🔋", "blue", "Break-even Intensity", intensity_value, intensity_sub),
+                unsafe_allow_html=True,
+            )
+
+        st.caption(
+            f"Break-even intensity is on a **total**-energy basis (Main Utility and liquefaction "
+            f"included), because that's what operational emissions are charged on — so compare it "
+            f"with the {actual_intensity:,.0f} kWh/t above, not with the process-only intensity "
+            f"chart further down. Embodied is fixed at {embodied_share * 100:,.1f}% of captured "
+            f"this week and doesn't move with supply, so {ceiling_eff:+.1f}% is the ceiling even "
+            f"on a zero-carbon grid."
+        )
+
+        # Lifetime view: one clean week can't carry the programme figure, so show
+        # what the scenario does to the cumulative number too.
+        life_captured = df["collected_co2_kg"].sum()
+        if life_captured > 0:
+            life_eff = df["net_removal_kg"].sum() / life_captured * 100
+            if is_scenario:
+                life_eff_actual = actual_df["net_removal_kg"].sum() / life_captured * 100
+                st.markdown(
+                    f"**All weeks combined:** {life_captured:,.1f} kg captured — "
+                    f"**{life_eff:+.1f}%** at {scenario_label}, versus **{life_eff_actual:+.1f}%** "
+                    f"as configured ({life_eff - life_eff_actual:+.1f} pp)."
+                )
+            else:
+                st.markdown(
+                    f"**All weeks combined:** {life_captured:,.1f} kg captured — "
+                    f"**{life_eff:+.1f}%** at the configured {scenario_label}."
+                )
+
+        if is_scenario:
+            with st.expander("📋 Week-by-week — configured vs scenario", expanded=False):
+                # to_numeric because the helpers return None for zero-capture or
+                # zero-energy weeks, which would otherwise leave these columns as
+                # object dtype and make the Change subtraction below raise.
+                comp = pd.DataFrame({
+                    "Week": df["week_label"],
+                    "Captured": df["collected_co2_kg"],
+                    "kWh/t": pd.to_numeric(df.apply(actual_intensity_kwh_per_t, axis=1), errors="coerce"),
+                    "As configured": pd.to_numeric(actual_df.apply(removal_efficiency_pct, axis=1), errors="coerce"),
+                    "Scenario": pd.to_numeric(df.apply(removal_efficiency_pct, axis=1), errors="coerce"),
+                    "Break-even EF": pd.to_numeric(df.apply(breakeven_ef_g_per_kwh, axis=1), errors="coerce"),
+                })
+                comp["Change"] = comp["Scenario"] - comp["As configured"]
+                comp["Captured"] = comp["Captured"].apply(lambda x: f"{x:,.1f} kg")
+                comp["kWh/t"] = comp["kWh/t"].apply(lambda x: f"{x:,.0f}" if pd.notna(x) else "—")
+                for col in ["As configured", "Scenario"]:
+                    comp[col] = comp[col].apply(lambda x: f"{x:+.1f}%" if pd.notna(x) else "—")
+                comp["Change"] = comp["Change"].apply(lambda x: f"{x:+.1f} pp" if pd.notna(x) else "—")
+                comp["Break-even EF"] = comp["Break-even EF"].apply(
+                    lambda x: f"{x:,.1f} g/kWh" if pd.notna(x) and x >= 0 else "unreachable"
+                )
+                st.dataframe(
+                    comp.sort_values("Week", ascending=False), width="stretch", hide_index=True
+                )
+                st.caption(
+                    "A week only flips positive once its break-even EF rises above the supply "
+                    "factor you're testing — so weeks with a break-even below the scenario stay "
+                    "net negative no matter how the grid is sourced."
+                )
 
     st.divider()
     st.markdown("### 💧 Carbon Balance")
