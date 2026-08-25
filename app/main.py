@@ -372,7 +372,24 @@ def render_carbon_nest_home() -> None:
     # theoretical design-capacity scenario.
     st.markdown('<h2 class="section-header">🎯 Capture &amp; Removal Efficiency</h2>', unsafe_allow_html=True)
 
-    gross_captured = latest_summary.gross_captured_kg if latest_summary else None
+    # Lead with the liquefied (credit-bearing) boundary, and fall back to the
+    # capture boundary when nothing was liquefied. Without the fallback a week
+    # that captured CO2 but liquefied none of it renders as "no calculated
+    # week", which is wrong — that week happened, and its capture performance
+    # is exactly what needs looking at.
+    liquefied_gross = (latest_summary.gross_captured_kg or 0) if latest_summary else 0
+    capture_gross = (latest_summary.capture_gross_kg or 0) if latest_summary else 0
+    if liquefied_gross > 0:
+        boundary_label = "liquefied"
+        gross_captured = liquefied_gross
+        week_emissions = latest_summary.total_emissions_kg or 0
+        week_net = latest_summary.net_removal_kg or 0
+    else:
+        boundary_label = "capture"
+        gross_captured = capture_gross
+        week_emissions = (latest_summary.capture_total_emissions_kg or 0) if latest_summary else 0
+        week_net = (latest_summary.capture_net_removal_kg or 0) if latest_summary else 0
+
     if not latest_summary or not gross_captured:
         st.markdown("""
         <div class="info-box warning">
@@ -381,23 +398,36 @@ def render_carbon_nest_home() -> None:
         </div>
         """, unsafe_allow_html=True)
     else:
-        week_emissions = latest_summary.total_emissions_kg or 0
-        week_net = latest_summary.net_removal_kg or 0
         removal_efficiency = week_net / gross_captured * 100
         eff_color = "#22C55E" if removal_efficiency > 0 else "#EF4444"
         hero_col1, hero_col2, hero_col3 = st.columns([2, 1, 1])
         with hero_col1:
+            basis = (
+                "against liquefied CO&sub2; &mdash; the credit-bearing boundary"
+                if boundary_label == "liquefied"
+                else "against collected CO&sub2; &mdash; nothing was liquefied this week"
+            )
             st.markdown(
                 render_hero_metric(
                     "NET REMOVAL &divide; GROSS CAPTURED",
                     f"{removal_efficiency:+.1f}%",
                     eff_color,
                     f"Week of {latest_summary.start_date.strftime('%b %d')} &ndash; "
-                    f"{latest_summary.end_date.strftime('%b %d, %Y')} &middot; real metered "
-                    f"operational emissions + output-based embodied",
+                    f"{latest_summary.end_date.strftime('%b %d, %Y')} &middot; {basis} "
+                    f"&middot; real metered operational emissions + output-based embodied",
                 ),
                 unsafe_allow_html=True,
             )
+            # Both boundaries, so the headline can never be mistaken for the
+            # whole picture: capture performance and liquefaction performance
+            # move independently and a weak week in one can mask the other.
+            if liquefied_gross > 0 and capture_gross > 0:
+                capture_eff = (latest_summary.capture_net_removal_kg or 0) / capture_gross * 100
+                st.caption(
+                    f"Capture boundary (liquefaction excluded): {capture_eff:+.1f}% on "
+                    f"{capture_gross:,.1f} kg collected · liquefaction efficiency "
+                    f"{(latest_summary.liquefaction_efficiency_pct or 0):.1f}%"
+                )
         with hero_col2:
             st.markdown(f"""
             <div class="metric-card info">

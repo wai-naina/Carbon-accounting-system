@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 from typing import Generator
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.orm import sessionmaker
 
 from datetime import datetime
@@ -78,10 +78,51 @@ def init_db() -> None:
         return
     engine = get_engine()
     Base.metadata.create_all(bind=engine)
+    _migrate_add_missing_columns(engine)
     _seed_system_config()
     _seed_admin_user()
     _seed_sorbent_config()
     _initialized = True
+
+
+def _migrate_add_missing_columns(engine) -> None:
+    """Add columns present on the models but missing from the database.
+
+    create_all() only creates missing *tables* — it never alters one that
+    already exists, so a newly declared Column() is silently absent from any
+    database created before it and every read of that attribute fails. There's
+    no Alembic in this project, and the only schema changes it makes are
+    additive nullable columns on the weekly summaries, which a plain
+    ALTER TABLE ADD COLUMN handles identically on SQLite and Postgres.
+
+    Deliberately additive and nullable-only. It never drops, renames or
+    retypes anything, so it cannot destroy data when a model and a deployed
+    database disagree — the worst case is a column it declines to add. NOT NULL
+    is intentionally dropped from the DDL: existing rows have no value for a
+    brand-new column, and both engines reject adding a NOT NULL column without
+    a default to a non-empty table. Runs inside init_db()'s once-per-process
+    guard, so this is a handful of catalog reads at startup, not per rerun.
+    """
+    inspector = inspect(engine)
+    existing_tables = set(inspector.get_table_names())
+    quote = engine.dialect.identifier_preparer.quote
+
+    for table in Base.metadata.sorted_tables:
+        if table.name not in existing_tables:
+            continue  # create_all() just built it, already current
+        present = {col["name"] for col in inspector.get_columns(table.name)}
+        missing = [col for col in table.columns if col.name not in present]
+        if not missing:
+            continue
+        with engine.begin() as conn:
+            for column in missing:
+                col_type = column.type.compile(dialect=engine.dialect)
+                conn.execute(
+                    text(
+                        f"ALTER TABLE {quote(table.name)} "
+                        f"ADD COLUMN {quote(column.name)} {col_type}"
+                    )
+                )
 
 
 def _seed_system_config() -> None:

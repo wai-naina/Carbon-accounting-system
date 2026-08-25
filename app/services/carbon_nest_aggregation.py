@@ -179,19 +179,55 @@ def create_or_update_weekly_summary(
     *,
     week_start: datetime,
     liquefied_co2_kg: float,
+    # --- Tier 1: trusted physical meters (drive all emissions) -------------
+    site_energy_kwh: float = 0.0,
+    plant_energy_kwh: float = 0.0,
+    # --- Tier 2: the utility skid parent meter -----------------------------
+    utility_skid_kwh: float = 0.0,
+    # --- Tier 3: components, all transcribed verbatim from the weekly PDF --
+    fan_n1_m1n2_kwh: float = 0.0,
+    fan_n1_m3n4_kwh: float = 0.0,
+    fan_n2_m1_kwh: float = 0.0,
+    fan_n2_m2_kwh: float = 0.0,
+    fan_n2_m3_kwh: float = 0.0,
+    fan_n2_m4_kwh: float = 0.0,
     water_pumps_kwh: float = 0.0,
     compressor_a_kwh: float = 0.0,
     compressor_b_kwh: float = 0.0,
+    air_dryer_kwh: float = 0.0,
     boiler_a_standby_kwh: float = 0.0,
     boiler_b_standby_kwh: float = 0.0,
     vp402_standby_kwh: float = 0.0,
     vp501_standby_kwh: float = 0.0,
-    ct_standby_kwh: float = 0.0,
+    ct_ct_pump_total_kwh: float = 0.0,
     liquefaction_active_transfer_kwh: float = 0.0,
     liquefaction_standby_kwh: float = 0.0,
     notes: Optional[str],
     created_by: Optional[int],
 ) -> CarbonNestWeeklySummary:
+    """Recompute and persist one Carbon Nest week.
+
+    Energy is modelled in three tiers (see CarbonNestWeeklySummary for the
+    column-level notes):
+
+      Tier 1  site_energy_kwh / plant_energy_kwh — physical meters. Operational
+              emissions are charged on the site meter and nothing else.
+      Tier 2  boilers / liquefaction / fans / utility skid / support infra —
+              what the plant meter decomposes into. Used for attribution and
+              for the reconciliation residual, never to form the total.
+      Tier 3  individual components. Diagnostics only.
+
+    Anchoring the total on a meter rather than a sum of parts is the point:
+    unnamed load (others_kwh — 43% of the skid as of 2026-08-22) is already
+    inside the plant meter, so it can neither escape the total nor distort it.
+    We get a correct total now and improve the labelling later.
+
+    Every caller-supplied figure here is a number printed verbatim on the
+    Athena weekly PDF. Each residual — support infra, fan standby, CT standby,
+    others, plant instrument error — is derived, so nobody hand-subtracts
+    anything. When a meter isn't supplied it degrades cleanly: the tier below
+    is summed in its place and that tier's residual comes out at zero.
+    """
     week_start, week_end = get_carbon_nest_week_bounds(week_start)
 
     # Cycles that COMPLETED in this week — see cycle_week_timestamp(). One cycle
@@ -215,27 +251,60 @@ def create_or_update_weekly_summary(
     water_pumps_kwh = safe_value(water_pumps_kwh)
     compressor_a_kwh = safe_value(compressor_a_kwh)
     compressor_b_kwh = safe_value(compressor_b_kwh)
+    air_dryer_kwh = safe_value(air_dryer_kwh)
     boiler_a_standby_kwh = safe_value(boiler_a_standby_kwh)
     boiler_b_standby_kwh = safe_value(boiler_b_standby_kwh)
     vp402_standby_kwh = safe_value(vp402_standby_kwh)
     vp501_standby_kwh = safe_value(vp501_standby_kwh)
-    ct_standby_kwh = safe_value(ct_standby_kwh)
     liquefaction_active_transfer_kwh = safe_value(liquefaction_active_transfer_kwh)
     liquefaction_standby_kwh = safe_value(liquefaction_standby_kwh)
     liquefaction_energy_kwh = liquefaction_active_transfer_kwh + liquefaction_standby_kwh
 
-    thermal_kwh = energy["thermal_kwh"] + boiler_a_standby_kwh + boiler_b_standby_kwh
-    auxiliary_kwh = (
-        (process_kwh - energy["thermal_kwh"])  # process-side fans/ct/ct_pump/vp402/vp501
-        + vp402_standby_kwh
-        + vp501_standby_kwh
-        + ct_standby_kwh
-        + water_pumps_kwh
-        + compressor_a_kwh
-        + compressor_b_kwh
-        + liquefaction_energy_kwh
+    # --- Fans: six per-fan PDF readings, standby derived against the CSV ----
+    fan_readings = [
+        safe_value(fan_n1_m1n2_kwh), safe_value(fan_n1_m3n4_kwh),
+        safe_value(fan_n2_m1_kwh), safe_value(fan_n2_m2_kwh),
+        safe_value(fan_n2_m3_kwh), safe_value(fan_n2_m4_kwh),
+    ]
+    fans_metered = sum(fan_readings)
+    fans_total_kwh = fans_metered if fans_metered > 0 else energy["fans_kwh"]
+    fan_standby_kwh = fans_total_kwh - energy["fans_kwh"]
+
+    # --- CT & CT Pump: PDF gives one total, no process/standby split --------
+    ct_in_cycle_kwh = energy["ct_kwh"] + energy["ct_pump_kwh"]
+    ct_ct_pump_total_kwh = safe_value(ct_ct_pump_total_kwh) or ct_in_cycle_kwh
+    ct_standby_kwh = ct_ct_pump_total_kwh - ct_in_cycle_kwh
+
+    # --- Utility skid: parent meter, "others" as the derived residual -------
+    vp402_total_kwh = energy["vp402_kwh"] + vp402_standby_kwh
+    vp501_total_kwh = energy["vp501_kwh"] + vp501_standby_kwh
+    skid_children_kwh = (
+        vp402_total_kwh + vp501_total_kwh + ct_ct_pump_total_kwh
+        + compressor_a_kwh + compressor_b_kwh + water_pumps_kwh + air_dryer_kwh
     )
-    total_kwh = thermal_kwh + auxiliary_kwh
+    utility_skid_kwh = safe_value(utility_skid_kwh) or skid_children_kwh
+    others_kwh = utility_skid_kwh - skid_children_kwh
+
+    # --- Tier 2 buckets, and the Tier 1 meters they reconcile against -------
+    boilers_kwh = energy["thermal_kwh"] + boiler_a_standby_kwh + boiler_b_standby_kwh
+    buckets_kwh = boilers_kwh + liquefaction_energy_kwh + fans_total_kwh + utility_skid_kwh
+
+    # A meter, when given, always wins over the sum of its parts. Falling back
+    # to the tier below keeps a partially-filled week computable and drives
+    # that tier's residual to exactly zero, so a blank meter can never be
+    # mistaken for a reconciled one.
+    plant_energy_kwh = safe_value(plant_energy_kwh) or buckets_kwh
+    site_energy_kwh = safe_value(site_energy_kwh) or plant_energy_kwh
+    support_infra_kwh = site_energy_kwh - plant_energy_kwh
+    plant_residual_kwh = plant_energy_kwh - buckets_kwh
+
+    # Operational emissions are charged on the site meter. Boilers are electric
+    # (confirmed 2026-08-25), so a single grid factor covers the whole site and
+    # thermal + auxiliary partition it exactly: auxiliary is defined as the
+    # residual rather than re-summed, so the two can never drift from the total.
+    total_kwh = site_energy_kwh
+    thermal_kwh = boilers_kwh
+    auxiliary_kwh = total_kwh - thermal_kwh
 
     grid_ef = get_grid_ef(session)
 
@@ -248,6 +317,7 @@ def create_or_update_weekly_summary(
         auxiliary_energy_kwh=auxiliary_kwh,
         total_energy_kwh=total_kwh,
         process_energy_kwh=process_kwh,
+        liquefaction_energy_kwh=liquefaction_energy_kwh,
         steam_kg=steam_kg,
         grid_ef=grid_ef,
     )
@@ -284,14 +354,33 @@ def create_or_update_weekly_summary(
     summary.boiler_a_kwh = energy["boiler_a_kwh"]
     summary.boiler_b_kwh = energy["boiler_b_kwh"]
     summary.main_utility_kwh = energy["main_utility_kwh"]
+    # Tier 1 — meters
+    summary.site_energy_kwh = site_energy_kwh
+    summary.plant_energy_kwh = plant_energy_kwh
+    summary.support_infra_kwh = support_infra_kwh
+    # Tier 2 — buckets and the reconciliation residual
+    summary.utility_skid_kwh = utility_skid_kwh
+    summary.fans_total_kwh = fans_total_kwh
+    summary.plant_residual_kwh = plant_residual_kwh
+    # Tier 3 — components
+    summary.fan_n1_m1n2_kwh = fan_readings[0]
+    summary.fan_n1_m3n4_kwh = fan_readings[1]
+    summary.fan_n2_m1_kwh = fan_readings[2]
+    summary.fan_n2_m2_kwh = fan_readings[3]
+    summary.fan_n2_m3_kwh = fan_readings[4]
+    summary.fan_n2_m4_kwh = fan_readings[5]
+    summary.fan_standby_kwh = fan_standby_kwh
     summary.water_pumps_kwh = water_pumps_kwh
     summary.compressor_a_kwh = compressor_a_kwh
     summary.compressor_b_kwh = compressor_b_kwh
+    summary.air_dryer_kwh = air_dryer_kwh
     summary.boiler_a_standby_kwh = boiler_a_standby_kwh
     summary.boiler_b_standby_kwh = boiler_b_standby_kwh
     summary.vp402_standby_kwh = vp402_standby_kwh
     summary.vp501_standby_kwh = vp501_standby_kwh
+    summary.ct_ct_pump_total_kwh = ct_ct_pump_total_kwh
     summary.ct_standby_kwh = ct_standby_kwh
+    summary.others_kwh = others_kwh
     summary.liquefaction_active_transfer_kwh = liquefaction_active_transfer_kwh
     summary.liquefaction_standby_kwh = liquefaction_standby_kwh
     summary.liquefaction_energy_kwh = liquefaction_energy_kwh
@@ -307,6 +396,7 @@ def create_or_update_weekly_summary(
     summary.loss_stage_2_kg = metrics["loss_stage_2_kg"]
     summary.loss_stage_3_kg = metrics["loss_stage_3_kg"]
     summary.total_loss_kg = metrics["total_loss_kg"]
+    summary.liquefaction_efficiency_pct = metrics["liquefaction_efficiency_pct"]
 
     summary.thermal_emissions_kg = metrics["thermal_emissions_kg"]
     summary.auxiliary_emissions_kg = metrics["auxiliary_emissions_kg"]
@@ -314,11 +404,22 @@ def create_or_update_weekly_summary(
     summary.infrastructure_embodied_kg = metrics["infrastructure_embodied_kg"]
     summary.sorbent_embodied_kg = metrics["sorbent_embodied_kg"]
     summary.total_embodied_emissions_kg = metrics["total_embodied_emissions_kg"]
+    # Boundary B — liquefied, credit-bearing
     summary.gross_captured_kg = metrics["gross_captured_kg"]
     summary.total_emissions_kg = metrics["total_emissions_kg"]
     summary.net_removal_kg = metrics["net_removal_kg"]
     summary.is_net_positive = metrics["is_net_positive"]
     summary.energy_intensity_kwh_per_tonne = metrics["energy_intensity_kwh_per_tonne"]
+    # Boundary A — capture, liquefaction excluded from both product and energy
+    summary.capture_gross_kg = metrics["capture_gross_kg"]
+    summary.capture_operational_emissions_kg = metrics["capture_operational_emissions_kg"]
+    summary.capture_embodied_emissions_kg = metrics["capture_embodied_emissions_kg"]
+    summary.capture_total_emissions_kg = metrics["capture_total_emissions_kg"]
+    summary.capture_net_removal_kg = metrics["capture_net_removal_kg"]
+    summary.capture_energy_kwh = metrics["capture_energy_kwh"]
+    summary.capture_energy_intensity_kwh_per_tonne = metrics[
+        "capture_energy_intensity_kwh_per_tonne"
+    ]
 
     session.commit()
 
@@ -354,51 +455,45 @@ def get_weekly_metrics_by_series(
         .first()
     )
 
-    # The manually-entered utility/standby/liquefaction figures are plant-level
-    # (Athena's weekly report doesn't break them out by series) — prorate them
-    # to this series by its share of BAG CO2 this week, same basis used
-    # everywhere else for shared/downstream quantities.
-    manual_total = 0.0
-    if weekly_summary:
-        manual_total = sum(
-            safe_value(getattr(weekly_summary, field))
-            for field in (
-                "water_pumps_kwh",
-                "compressor_a_kwh",
-                "compressor_b_kwh",
-                "boiler_a_standby_kwh",
-                "boiler_b_standby_kwh",
-                "vp402_standby_kwh",
-                "vp501_standby_kwh",
-                "ct_standby_kwh",
-                "liquefaction_active_transfer_kwh",
-                "liquefaction_standby_kwh",
-            )
-        )
-
-    manual_share_kwh = 0.0
-    if manual_total and series_filter:
+    # Athena reports every non-per-cycle energy figure at plant level, with no
+    # series breakdown, so anything from the weekly summary is prorated to this
+    # series by its share of BAG CO2 — the same basis used for every other
+    # shared/downstream quantity here. One share factor for all of them, so the
+    # prorated parts can't drift apart from each other.
+    share = 1.0
+    if series_filter:
         all_cycles = get_filtered_cycles(session, week_start, week_end, None)
         total_bag_all = sum(safe_value(c.bag_co2_kg) for c in all_cycles)
-        if total_bag_all > 0 and bag_co2 > 0:
-            manual_share_kwh = manual_total * (bag_co2 / total_bag_all)
-    elif manual_total:
-        manual_share_kwh = manual_total
+        share = (bag_co2 / total_bag_all) if (total_bag_all > 0 and bag_co2 > 0) else 0.0
 
+    # Everything on the site meter the per-cycle CSV doesn't account for:
+    # standby, the utility skid (including its unidentified residual), support
+    # infrastructure and liquefaction. Taken as a residual against the metered
+    # total rather than re-summed from named components, so load we haven't
+    # identified yet still reaches the series views instead of vanishing.
+    non_cycle_kwh = 0.0
+    boiler_standby_kwh = 0.0
     liquefaction_energy_kwh = 0.0
-    if weekly_summary and weekly_summary.liquefaction_energy_kwh:
-        if series_filter:
-            all_cycles = get_filtered_cycles(session, week_start, week_end, None)
-            total_bag_all = sum(safe_value(c.bag_co2_kg) for c in all_cycles)
-            if total_bag_all > 0 and bag_co2 > 0:
-                bag_ratio = bag_co2 / total_bag_all
-                liquefaction_energy_kwh = safe_value(weekly_summary.liquefaction_energy_kwh) * bag_ratio
-        else:
-            liquefaction_energy_kwh = safe_value(weekly_summary.liquefaction_energy_kwh)
+    if weekly_summary:
+        non_cycle_kwh = share * max(
+            safe_value(weekly_summary.total_energy_kwh)
+            - safe_value(weekly_summary.process_energy_kwh),
+            0.0,
+        )
+        boiler_standby_kwh = share * (
+            safe_value(weekly_summary.boiler_a_standby_kwh)
+            + safe_value(weekly_summary.boiler_b_standby_kwh)
+        )
+        liquefaction_energy_kwh = share * safe_value(weekly_summary.liquefaction_energy_kwh)
 
-    thermal_kwh = energy["thermal_kwh"]
-    auxiliary_kwh = (process_kwh - thermal_kwh) + manual_share_kwh
-    total_kwh = process_kwh + manual_share_kwh
+    # Boiler standby is thermal, so it's moved across rather than left in the
+    # auxiliary residual — that keeps this split matching the one stored by
+    # create_or_update_weekly_summary(). liquefaction_energy_kwh is already
+    # inside non_cycle_kwh and is returned separately only for the energy
+    # breakdown charts; adding it again here would double-count it.
+    thermal_kwh = energy["thermal_kwh"] + boiler_standby_kwh
+    total_kwh = process_kwh + non_cycle_kwh
+    auxiliary_kwh = total_kwh - thermal_kwh
 
     return {
         "cycles": len(cycles),
@@ -411,7 +506,7 @@ def get_weekly_metrics_by_series(
         "process_kwh": process_kwh,
         "steam_kg": steam_kg,
         "liquefaction_energy_kwh": liquefaction_energy_kwh,
-        "manual_utility_kwh": manual_share_kwh,
+        "non_cycle_kwh": non_cycle_kwh,
         "fans_kwh": energy["fans_kwh"],
         "ct_kwh": energy["ct_kwh"],
         "ct_pump_kwh": energy["ct_pump_kwh"],

@@ -224,6 +224,94 @@ def _kpi_card(label: str, value: str, sub: str, accent_hex: str, styles: dict) -
     return inner
 
 
+def _boundary_note(row: pd.Series) -> str:
+    """Subtitle for the Gross Captured card, naming the boundary in force.
+
+    Series-filtered reports can only use the capture boundary — liquefaction is
+    a single shared downstream process with no per-series liquefied figure.
+    """
+    if row.get("boundary") == "capture":
+        return "Collected CO₂ (capture boundary)"
+    return "Liquefied CO₂ (credit-bearing)"
+
+
+def _boundaries_table(row: pd.Series, styles: dict) -> Optional[Table]:
+    """Side-by-side capture vs liquefied removal, or None if unavailable.
+
+    Returns None for series-filtered reports, where only one boundary exists
+    and a comparison would be misleading rather than informative.
+    """
+    if row.get("boundary") == "capture" or "capture_net_removal_kg" not in row:
+        return None
+
+    def eff(net, product):
+        return f"{net / product * 100:+.1f}%" if product else "—"
+
+    def mwh(energy, product):
+        return f"{energy / (product / 1000) / 1000:,.1f}" if product else "—"
+
+    cap_product = row["capture_gross_kg"] or 0
+    liq_product = row["liquefied_gross_kg"] or 0
+
+    header = [
+        "Boundary", "Product\n(kg)", "Energy\n(kWh)", "Operational\n(kg)",
+        "Embodied\n(kg)", "Net removal\n(kg)", "Efficiency", "MWh/t",
+    ]
+    body = [
+        [
+            "A · Capture\n(liquefaction excluded)",
+            f"{cap_product:,.1f}",
+            f"{row['capture_energy_kwh'] or 0:,.0f}",
+            f"{row['capture_operational_emissions_kg'] or 0:,.1f}",
+            f"{row['capture_embodied_emissions_kg'] or 0:,.1f}",
+            f"{row['capture_net_removal_kg'] or 0:+,.1f}",
+            eff(row["capture_net_removal_kg"] or 0, cap_product),
+            mwh(row["capture_energy_kwh"] or 0, cap_product),
+        ],
+        [
+            "B · Liquefied\n(credit-bearing)",
+            f"{liq_product:,.1f}",
+            f"{row['total_energy_kwh'] or 0:,.0f}",
+            f"{row['total_operational_emissions_kg'] or 0:,.1f}",
+            f"{row['total_embodied_emissions_kg'] or 0:,.1f}",
+            f"{row['liquefied_net_removal_kg'] or 0:+,.1f}",
+            eff(row["liquefied_net_removal_kg"] or 0, liq_product),
+            mwh(row["total_energy_kwh"] or 0, liq_product),
+        ],
+    ]
+
+    table = Table(
+        [header] + body,
+        colWidths=[34 * mm, 16 * mm, 18 * mm, 21 * mm, 18 * mm, 21 * mm, 18 * mm, 14 * mm],
+    )
+    style = [
+        ("FONTNAME", (0, 0), (-1, 0), FONT_BOLD),
+        ("FONTSIZE", (0, 0), (-1, 0), 6.5),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.HexColor(MUTED)),
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#F0F4F3")),
+        ("FONTNAME", (0, 1), (0, -1), FONT_BOLD),
+        ("FONTNAME", (1, 1), (-1, -1), FONT_REGULAR),
+        ("FONTSIZE", (0, 1), (-1, -1), 7.5),
+        ("TEXTCOLOR", (0, 1), (-1, -1), colors.HexColor(INK)),
+        ("ALIGN", (1, 0), (-1, -1), "RIGHT"),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("TOPPADDING", (0, 0), (-1, -1), 4),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+        ("LEFTPADDING", (0, 0), (-1, -1), 5),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 5),
+        ("BOX", (0, 0), (-1, -1), 0.5, colors.HexColor(LINE)),
+        ("INNERGRID", (0, 0), (-1, -1), 0.25, colors.HexColor(LINE)),
+    ]
+    # Colour each net-removal cell by its own sign — the two boundaries can
+    # legitimately disagree, and that disagreement is the point of the table.
+    for offset, net in enumerate((row["capture_net_removal_kg"] or 0, row["liquefied_net_removal_kg"] or 0)):
+        accent = GREEN if net > 0 else RED
+        style.append(("TEXTCOLOR", (5, 1 + offset), (6, 1 + offset), colors.HexColor(accent)))
+        style.append(("FONTNAME", (5, 1 + offset), (6, 1 + offset), FONT_BOLD))
+    table.setStyle(TableStyle(style))
+    return table
+
+
 def _draw_letterhead(canvas_obj, doc, week_label: str) -> None:
     canvas_obj.saveState()
     canvas_obj.setFillColor(colors.HexColor(BRAND_DARK))
@@ -263,7 +351,7 @@ def _single_week_subsystem_chart(row: pd.Series) -> Optional[go.Figure]:
     items = [
         (name, row.get(col, 0) or 0, color)
         for name, col, color in CN_ENERGY_SUBSYSTEMS
-        if name != "Main Utility"  # legacy/being-replaced bucket, not a real subsystem to rank
+        if name != "Plant Residual"  # instrument error, not something that consumes power
     ]
     items = [item for item in items if item[1] > 0]
     if not items:
@@ -342,7 +430,7 @@ def _build_narrative(row: pd.Series) -> str:
     subsystems = [
         (name, row.get(col, 0) or 0)
         for name, col, _ in CN_ENERGY_SUBSYSTEMS
-        if name != "Main Utility"
+        if name != "Plant Residual"
     ]
     subsystems = [s for s in subsystems if s[1] > 0]
     consumer_stat = "—"
@@ -398,9 +486,11 @@ def generate_weekly_pdf_report(session, week_start: datetime, series_filter: Opt
     net_removal = row["net_removal_kg"] or 0
     removal_efficiency = (net_removal / gross_captured * 100) if gross_captured else 0
     collection_efficiency = (row["total_bag_co2_kg"] / row["total_ads_co2_kg"] * 100) if row["total_ads_co2_kg"] else None
+    # Keyed off collected, not liquefied, so a week that liquefied nothing
+    # reports 0.0% rather than "—" — a real and important result, not missing data.
     liquefaction_efficiency = (
         row["liquefied_co2_kg"] / row["total_bag_co2_kg"] * 100
-        if row["liquefied_co2_kg"] and row["total_bag_co2_kg"] else None
+        if row["total_bag_co2_kg"] else None
     )
     eff_color = GREEN if removal_efficiency > 0 else RED
 
@@ -420,7 +510,7 @@ def generate_weekly_pdf_report(session, week_start: datetime, series_filter: Opt
 
     # --- KPI card row ---
     cards = [
-        _kpi_card("Gross Captured", f"{gross_captured:,.1f} kg", "Liquefied if available, else collected", "#0EA5E9", styles),
+        _kpi_card("Gross Captured", f"{gross_captured:,.1f} kg", _boundary_note(row), "#0EA5E9", styles),
         _kpi_card("Operational Emissions", f"{row['total_operational_emissions_kg']:,.1f} kg", f"Grid EF: {grid_ef:.4f} kg/kWh", "#F59E0B", styles),
         _kpi_card("Embodied Emissions", f"{row['total_embodied_emissions_kg']:,.1f} kg", "Output-based, v0.6 LCA", "#A855F7", styles),
         _kpi_card("Net Removal", f"{net_removal:+,.1f} kg", "Captured minus total emissions", GREEN if net_removal > 0 else RED, styles),
@@ -439,7 +529,25 @@ def generate_weekly_pdf_report(session, week_start: datetime, series_filter: Opt
     card_row2 = Table([cards2], colWidths=[40 * mm] * 4)
     card_row2.setStyle(TableStyle([("LEFTPADDING", (0, 0), (-1, -1), 3), ("RIGHTPADDING", (0, 0), (-1, -1), 3)]))
     story.append(card_row2)
-    story.append(Spacer(1, 7 * mm))
+    story.append(Spacer(1, 5 * mm))
+
+    boundaries = _boundaries_table(row, styles)
+    if boundaries is not None:
+        story.append(Paragraph("Removal Efficiency — With and Without Liquefaction", styles["h2"]))
+        story.append(boundaries)
+        story.append(Spacer(1, 2 * mm))
+        story.append(Paragraph(
+            "The liquefied boundary carries <i>lower</i> total emissions but a "
+            "<i>worse</i> net removal — embodied emissions are charged per tonne of "
+            "product, so they shrink with the denominator. CO₂ vented during "
+            "liquefaction reduces product without being charged as an emission: it is "
+            "atmospheric carbon returning to the atmosphere, a failure to remove "
+            "rather than a new release.",
+            styles["sub"],
+        ))
+        story.append(Spacer(1, 6 * mm))
+    else:
+        story.append(Spacer(1, 2 * mm))
 
     # --- Narrative ---
     story.append(Paragraph("What's Driving This Week's Result", styles["h2"]))

@@ -669,21 +669,24 @@ def cn_energy_intensity_chart(df: pd.DataFrame) -> go.Figure:
 # orange, CT/CT Pump both sky blue, VP402/VP501 both violet), which defeats the
 # point of a stacked chart even though the legend text technically still
 # differentiates them.
+# The Tier 2 buckets. These six sum to the site meter exactly, which is the
+# whole reason the chart uses them: the previous per-component stack mixed in
+# Main Utility — a parent meter that overlaps CT/VP402/VP501 and is excluded
+# from every total — so the stack simultaneously double-counted and fell short
+# of the site figure. Component-level detail is Tier 3, and lives in the
+# Components sheet of the Excel export.
 CN_ENERGY_SUBSYSTEMS = [
-    ("Boiler A", "boiler_a_kwh", "#F97316"),      # orange
-    ("Boiler B", "boiler_b_kwh", "#FACC15"),      # amber/gold
-    ("Fans", "fans_kwh", "#14B8A6"),               # teal
-    ("CT", "ct_kwh", "#0EA5E9"),                   # sky blue
-    ("CT Pump", "ct_pump_kwh", "#3B82F6"),         # blue
-    ("VP402", "vp402_kwh", "#A855F7"),             # violet
-    ("VP501", "vp501_kwh", "#EC4899"),             # pink
-    ("Main Utility", "main_utility_kwh", "#94A3B8"),  # neutral gray
-    ("Liquefaction", "liquefaction_energy_kwh", "#6366F1"),  # indigo
+    ("Boilers", "boilers_bucket_kwh", "#F97316"),              # orange
+    ("Liquefaction", "liquefaction_energy_kwh", "#6366F1"),    # indigo
+    ("Fans", "fans_total_kwh", "#14B8A6"),                     # teal
+    ("Utility Skid", "utility_skid_kwh", "#0EA5E9"),           # sky blue
+    ("Support Infrastructure", "support_infra_kwh", "#A855F7"),  # violet
+    ("Plant Residual", "plant_residual_kwh", "#94A3B8"),       # neutral gray
 ]
 
 
 def cn_energy_breakdown_chart(df: pd.DataFrame) -> go.Figure:
-    """Stacked bar of Carbon Nest energy by subsystem (Boiler A/B, Fans, CT, CT Pump, VP402/501, Main Utility)."""
+    """Stacked bar of Carbon Nest energy by Tier 2 bucket, summing to the site meter."""
     if df.empty:
         return None
 
