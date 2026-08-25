@@ -537,11 +537,23 @@ def main() -> None:
                 st.success(f"✅ Saved week {summary.start_date.strftime('%Y-%m-%d')} → {summary.end_date.strftime('%Y-%m-%d')}")
 
                 st.markdown("#### Removal — both boundaries")
-                st.caption(
-                    "The liquefied boundary shows *lower* total emissions but *worse* "
-                    "net removal. That's correct: embodied is charged per tonne of "
-                    "product, so it shrinks with the denominator."
-                )
+                # Only true at or below 100% liquefaction efficiency — above it,
+                # boundary B's product is the larger of the two and it carries the
+                # higher embodied charge. See _boundaries_note() in pdf_report.py.
+                if (summary.gross_captured_kg or 0) > (summary.capture_gross_kg or 0):
+                    st.caption(
+                        "⚠️ Liquefaction exceeded collection this week, so bagged CO₂ held "
+                        "over from an earlier week was drawn down. Above 100% this is an "
+                        "inventory movement rather than a yield — read it across several "
+                        "weeks. Boundary B carries the higher embodied charge here, the "
+                        "reverse of a normal week."
+                    )
+                else:
+                    st.caption(
+                        "The liquefied boundary shows *lower* total emissions but *worse* "
+                        "net removal. That's correct: embodied is charged per tonne of "
+                        "product, so it shrinks with the denominator."
+                    )
                 st.dataframe(
                     [
                         {

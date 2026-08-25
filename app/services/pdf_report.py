@@ -235,6 +235,44 @@ def _boundary_note(row: pd.Series) -> str:
     return "Liquefied CO₂ (credit-bearing)"
 
 
+def _boundaries_note(row: pd.Series) -> str:
+    """Explain the two boundaries against what this week's numbers actually did.
+
+    This was previously a fixed sentence asserting that the liquefied boundary
+    always carries lower total emissions. That is only true while liquefaction
+    efficiency is at or below 100%. The week of 2026-08-01 liquefied 353.0 kg
+    against 349.2 kg collected — a bag inventory carried over from an earlier
+    week was drawn down — and boundary B's emissions came out *above* A's, so
+    the fixed sentence printed a false statement.
+    """
+    bag = row.get("capture_gross_kg") or 0
+    liq = row.get("liquefied_gross_kg") or 0
+    cap_em = row.get("capture_total_emissions_kg") or 0
+    liq_em = row.get("liquefied_total_emissions_kg") or 0
+
+    if liq > bag and bag > 0:
+        return (
+            f"Liquefaction exceeded collection this week — {liq:,.1f} kg liquefied against "
+            f"{bag:,.1f} kg collected, or {liq / bag * 100:,.1f}% — so bagged CO₂ held over "
+            f"from an earlier week was drawn down. Liquefaction efficiency above 100% is an "
+            f"inventory movement, not a yield: read it across several weeks rather than one. "
+            f"Because boundary B's product is the larger of the two, it carries the higher "
+            f"embodied charge here, and its total emissions ({liq_em:,.1f} kg) sit above "
+            f"boundary A's ({cap_em:,.1f} kg) — the reverse of a normal week."
+        )
+
+    direction = "lower" if liq_em < cap_em else "higher"
+    return (
+        f"The liquefied boundary carries <i>{direction}</i> total emissions but a "
+        f"<i>worse</i> net removal — embodied emissions are charged per tonne of product, so "
+        f"they shrink with the denominator. CO₂ vented during liquefaction reduces product "
+        f"without being charged as an emission: it is atmospheric carbon returning to the "
+        f"atmosphere, a failure to remove rather than a new release. Note that bagged CO₂ can "
+        f"also carry across a week boundary, so a single week's liquefaction efficiency mixes "
+        f"yield with inventory timing."
+    )
+
+
 def _boundaries_table(row: pd.Series, styles: dict) -> Optional[Table]:
     """Side-by-side capture vs liquefied removal, or None if unavailable.
 
@@ -536,15 +574,7 @@ def generate_weekly_pdf_report(session, week_start: datetime, series_filter: Opt
         story.append(Paragraph("Removal Efficiency — With and Without Liquefaction", styles["h2"]))
         story.append(boundaries)
         story.append(Spacer(1, 2 * mm))
-        story.append(Paragraph(
-            "The liquefied boundary carries <i>lower</i> total emissions but a "
-            "<i>worse</i> net removal — embodied emissions are charged per tonne of "
-            "product, so they shrink with the denominator. CO₂ vented during "
-            "liquefaction reduces product without being charged as an emission: it is "
-            "atmospheric carbon returning to the atmosphere, a failure to remove "
-            "rather than a new release.",
-            styles["sub"],
-        ))
+        story.append(Paragraph(_boundaries_note(row), styles["sub"]))
         story.append(Spacer(1, 6 * mm))
     else:
         story.append(Spacer(1, 2 * mm))
