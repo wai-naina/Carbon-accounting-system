@@ -320,9 +320,15 @@ def render_carbon_nest_home() -> None:
             week_start, week_end = get_carbon_nest_week_bounds(cycle_week_timestamp(latest_cycle))
             live_cycles = get_filtered_cycles(session, week_start, week_end)
         live_ads = sum(c.ads_co2_kg or 0 for c in live_cycles)
+        live_des = sum(c.des_co2_kg or 0 for c in live_cycles)
         live_bag = sum(c.bag_co2_kg or 0 for c in live_cycles)
         live_steam = sum(c.steam_kg or 0 for c in live_cycles)
-        collection_efficiency = (live_bag / live_ads * 100) if live_ads > 0 else None
+        # One stage per name, matching the weekly PDF and Athena's own per-cycle
+        # DES/BAG Efficiency columns. Collection is collected ÷ DESORBED — it
+        # previously meant collected ÷ adsorbed here, which spanned two stages
+        # under a name the plant already uses for just one of them.
+        desorption_efficiency = (live_des / live_ads * 100) if live_ads > 0 else None
+        collection_efficiency = (live_bag / live_des * 100) if live_des > 0 else None
 
         # Steam intensity (kg steam per tonne CO2 captured) needs the weekly
         # gross-captured figure, so like liquefaction efficiency it comes from
@@ -344,6 +350,17 @@ def render_carbon_nest_home() -> None:
             )
         else:
             liquefaction_efficiency = None
+
+        # Capture efficiency closes the chain (liquefied ÷ adsorbed). Like
+        # liquefaction efficiency it has to come from the calculated week rather
+        # than the live cycles, because liquefied CO2 is only ever recorded at the
+        # weekly level — hence the two "latest week" tiles beside two live ones.
+        if latest_summary and latest_summary.total_ads_co2_kg:
+            capture_efficiency = (
+                (latest_summary.liquefied_co2_kg or 0) / latest_summary.total_ads_co2_kg * 100
+            )
+        else:
+            capture_efficiency = None
 
         total_weeks = session.query(CarbonNestWeeklySummary).count()
 
@@ -452,23 +469,34 @@ def render_carbon_nest_home() -> None:
     # --- Secondary: process efficiencies + cumulative mass totals ---
     st.markdown('<h2 class="section-header">📊 Operational &amp; Cumulative Figures</h2>', unsafe_allow_html=True)
     st.caption(
-        "Collection and Liquefaction Efficiency are pure process measurements — they don't "
-        "touch emissions. Collection Efficiency reflects this week's live cycles; Liquefaction "
-        "Efficiency reflects the most recently calculated week (liquefaction is only ever "
-        "logged at the weekly level)."
+        "Four process measurements, one per step of the chain — none of them touch emissions. "
+        "**Desorption** (desorbed ÷ adsorbed) and **Collection** (collected ÷ desorbed) come from "
+        "this week's live cycles; **Liquefaction** (liquefied ÷ collected) and **Capture** "
+        "(liquefied ÷ adsorbed — the overall chain) come from the most recently calculated week, "
+        "since liquefied CO₂ is only ever logged at the weekly level. The weekly PDF reports all "
+        "four on a single week, where Desorption × Collection × Liquefaction = Capture exactly."
     )
 
-    tile_col1, tile_col2, tile_col3, tile_col4 = st.columns(4)
-    with tile_col1:
+    eff_col1, eff_col2, eff_col3, eff_col4 = st.columns(4)
+    with eff_col1:
+        st.markdown(
+            render_stat_tile(
+                "🔥", "purple", "Desorption Efficiency",
+                f"{desorption_efficiency:.1f}%" if desorption_efficiency is not None else "—",
+                "Desorbed ÷ Adsorbed, this week",
+            ),
+            unsafe_allow_html=True,
+        )
+    with eff_col2:
         st.markdown(
             render_stat_tile(
                 "🔄", "teal", "Collection Efficiency",
                 f"{collection_efficiency:.1f}%" if collection_efficiency is not None else "—",
-                "Collected ÷ Adsorbed, this week",
+                "Collected ÷ Desorbed, this week",
             ),
             unsafe_allow_html=True,
         )
-    with tile_col2:
+    with eff_col3:
         st.markdown(
             render_stat_tile(
                 "❄️", "blue", "Liquefaction Efficiency",
@@ -477,12 +505,23 @@ def render_carbon_nest_home() -> None:
             ),
             unsafe_allow_html=True,
         )
-    with tile_col3:
+    with eff_col4:
+        st.markdown(
+            render_stat_tile(
+                "🎯", "green", "Capture Efficiency",
+                f"{capture_efficiency:.1f}%" if capture_efficiency is not None else "—",
+                "Liquefied ÷ Adsorbed, latest week · overall",
+            ),
+            unsafe_allow_html=True,
+        )
+
+    tile_col1, tile_col2 = st.columns(2)
+    with tile_col1:
         st.markdown(
             render_stat_tile("🎈", "green", "Total CO₂ Collected", f"{total_bag:,.1f} kg"),
             unsafe_allow_html=True,
         )
-    with tile_col4:
+    with tile_col2:
         st.markdown(
             render_stat_tile("💧", "purple", "Total CO₂ Liquefied", f"{total_liquefied:,.1f} kg"),
             unsafe_allow_html=True,

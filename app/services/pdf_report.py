@@ -224,6 +224,11 @@ def _kpi_card(label: str, value: str, sub: str, accent_hex: str, styles: dict) -
     return inner
 
 
+def _pct(value: Optional[float]) -> str:
+    """A percentage for a KPI card, or an em dash when the ratio is undefined."""
+    return f"{value:.1f}%" if value is not None else "—"
+
+
 def _boundary_note(row: pd.Series) -> str:
     """Subtitle for the Gross Captured card, naming the boundary in force.
 
@@ -523,13 +528,31 @@ def generate_weekly_pdf_report(session, week_start: datetime, series_filter: Opt
     total_emissions = row["total_emissions_kg"] or 0
     net_removal = row["net_removal_kg"] or 0
     removal_efficiency = (net_removal / gross_captured * 100) if gross_captured else 0
-    collection_efficiency = (row["total_bag_co2_kg"] / row["total_ads_co2_kg"] * 100) if row["total_ads_co2_kg"] else None
+    # Four process efficiencies, one per physical step of the chain. Each spans
+    # exactly one transition and is named after the step it measures:
+    #
+    #   Desorption    desorbed  / adsorbed   = Athena's per-cycle DES Efficiency
+    #   Collection    collected / desorbed   = Athena's per-cycle BAG Efficiency
+    #   Liquefaction  liquefied / collected
+    #   Capture       liquefied / adsorbed   = the overall chain, and exactly the
+    #                                          product of the three above
+    #
+    # Collection deliberately means collected ÷ DESORBED. It previously meant
+    # collected ÷ adsorbed, which silently spanned two stages and reused a name
+    # Athena had already assigned to something else — raised by the site team on
+    # 2026-08-27, where "collection efficiency" has always meant bag ÷ desorbed.
+    # Preserve the one-stage-per-name rule if these are ever edited: it is what
+    # makes Desorption × Collection × Liquefaction = Capture hold exactly.
+    ads_co2 = row["total_ads_co2_kg"] or 0
+    des_co2 = row["total_des_co2_kg"] or 0
+    bag_co2 = row["total_bag_co2_kg"] or 0
+    liq_co2 = row["liquefied_co2_kg"] or 0
+    desorption_efficiency = (des_co2 / ads_co2 * 100) if ads_co2 else None
+    collection_efficiency = (bag_co2 / des_co2 * 100) if des_co2 else None
     # Keyed off collected, not liquefied, so a week that liquefied nothing
     # reports 0.0% rather than "—" — a real and important result, not missing data.
-    liquefaction_efficiency = (
-        row["liquefied_co2_kg"] / row["total_bag_co2_kg"] * 100
-        if row["total_bag_co2_kg"] else None
-    )
+    liquefaction_efficiency = (liq_co2 / bag_co2 * 100) if bag_co2 else None
+    capture_efficiency = (liq_co2 / ads_co2 * 100) if ads_co2 else None
     eff_color = GREEN if removal_efficiency > 0 else RED
 
     story = []
@@ -558,15 +581,28 @@ def generate_weekly_pdf_report(session, week_start: datetime, series_filter: Opt
     story.append(card_row)
     story.append(Spacer(1, 3 * mm))
 
+    # The chain in order, left to right, so the reader walks adsorbed → desorbed
+    # → bagged → liquefied and lands on the overall figure last.
     cards2 = [
-        _kpi_card("Collection Efficiency", f"{collection_efficiency:.1f}%" if collection_efficiency is not None else "—", "Collected ÷ Adsorbed", "#3DB3B3", styles),
-        _kpi_card("Liquefaction Efficiency", f"{liquefaction_efficiency:.1f}%" if liquefaction_efficiency is not None else "—", "Liquefied ÷ Collected", "#0EA5E9", styles),
+        _kpi_card("Desorption Efficiency", _pct(desorption_efficiency), "Desorbed ÷ Adsorbed", "#A855F7", styles),
+        _kpi_card("Collection Efficiency", _pct(collection_efficiency), "Collected ÷ Desorbed", "#3DB3B3", styles),
+        _kpi_card("Liquefaction Efficiency", _pct(liquefaction_efficiency), "Liquefied ÷ Collected", "#0EA5E9", styles),
+        _kpi_card("Capture Efficiency", _pct(capture_efficiency), "Liquefied ÷ Adsorbed · overall", BRAND_TEAL, styles),
+    ]
+    card_row2 = Table([cards2], colWidths=[40 * mm] * 4)
+    card_row2.setStyle(TableStyle([("LEFTPADDING", (0, 0), (-1, -1), 3), ("RIGHTPADDING", (0, 0), (-1, -1), 3), ("VALIGN", (0, 0), (-1, -1), "TOP")]))
+    story.append(card_row2)
+    story.append(Spacer(1, 3 * mm))
+
+    cards3 = [
         _kpi_card("Cycles This Week", f"{int(row['total_cycles'] or 0)}", f"1n3: {s1n3['cycles']} · 2n4: {s2n4['cycles']}", BRAND_TEAL, styles),
         _kpi_card("Energy Intensity", f"{row['energy_intensity_kwh_per_tonne'] / 1000:.1f} MWh/t" if row["energy_intensity_kwh_per_tonne"] else "—", "Process energy per tonne captured", "#94A3B8", styles),
     ]
-    card_row2 = Table([cards2], colWidths=[40 * mm] * 4)
-    card_row2.setStyle(TableStyle([("LEFTPADDING", (0, 0), (-1, -1), 3), ("RIGHTPADDING", (0, 0), (-1, -1), 3)]))
-    story.append(card_row2)
+    card_row3 = Table([cards3], colWidths=[40 * mm] * 2, hAlign="LEFT")
+    # VALIGN TOP so the two cards' accent rules line up even when one card's
+    # value wraps to a second line and the other's doesn't.
+    card_row3.setStyle(TableStyle([("LEFTPADDING", (0, 0), (-1, -1), 3), ("RIGHTPADDING", (0, 0), (-1, -1), 3), ("VALIGN", (0, 0), (-1, -1), "TOP")]))
+    story.append(card_row3)
     story.append(Spacer(1, 5 * mm))
 
     boundaries = _boundaries_table(row, styles)
