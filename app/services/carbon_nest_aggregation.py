@@ -4,13 +4,20 @@ from datetime import datetime, time, timedelta
 from typing import Optional, Tuple
 
 import streamlit as st
-from sqlalchemy import and_, or_
+from sqlalchemy import and_, func, or_
 
 from app.database.models import CarbonNestCycleData, CarbonNestWeeklySummary, SystemConfig
 from app.services.carbon_nest_calculations import calculate_weekly_metrics, safe_value
 
 SATURDAY = 5  # date.weekday(): Monday=0 ... Saturday=5, Sunday=6
 WEEK_BOUNDARY_HOUR = 18
+
+# Which timestamp decides a cycle's week — the ONE place to change it.
+#   "start"  a cycle counts toward the week it STARTED in. Matches Athena, whose
+#            weekly PDF and Plant Cycles export both window by Start Time.
+#   "end"    a cycle counts toward the week it COMPLETED in.
+# See cycle_week_timestamp() for the evidence and for why we are on "start".
+WEEK_ATTRIBUTION = "start"
 
 
 def get_carbon_nest_week_bounds(reference) -> Tuple[datetime, datetime]:
@@ -62,45 +69,70 @@ def get_series_filter() -> Optional[str]:
 def cycle_week_timestamp(cycle):
     """The timestamp that decides which Carbon Nest week a cycle belongs to.
 
-    A cycle counts toward the week in which it **completed**. A cycle running
-    17:56 -> 19:36 across the Saturday 18:00 rollover therefore belongs wholly
-    to the new week: the closing week reports 43 cycles rather than 44, and the
-    straddling cycle is picked up by the following week. Cycles are never split
-    — there is no such thing as half a cycle, and every physical quantity on the
-    row (CO2, kWh, steam) stays whole and attached to exactly one week.
+    Governed by WEEK_ATTRIBUTION, currently **"start"**: a cycle counts toward
+    the week it STARTED in. Either way a cycle is never split — there is no such
+    thing as half a cycle, and every physical quantity on the row (CO2, kWh,
+    steam) stays whole and attached to exactly one week. Both rules are clean
+    partitions; all-time totals agree under either, only the boundary moves.
 
-    **CAS deliberately differs from Athena here, and the difference is visible.**
-    Athena windows by Start Time — not just in the *Plant Cycles* CSV export but
-    in the weekly PDF too. Verified against the week of 22-29 Aug 2026, where
-    cycle #346 ran 17:56 -> 19:36 on the 22nd:
+    **Why "start": it matches Athena, and the hand-entered figures come from
+    Athena.** Verified against the week of 22-29 Aug 2026, where cycle #346 ran
+    17:56 -> 19:36 on the 22nd:
 
         rule          cycles  desorbed   collected  ADS hrs  DES hrs
         Start Time        43   229.905     203.308    43.072   71.193   <- PDF
-        End Time (CAS)    44   235.540     208.837    44.091   72.857
+        End Time          44   235.540     208.837    44.091   72.857
 
-    Every figure in the PDF (229.9 / 203.3 / 43.07 / 71.19) matches the Start
-    Time window exactly, so any earlier claim that the PDF follows the
-    completion rule was wrong. Expect CAS to read one cycle more or fewer than
-    the PDF in any week where a cycle straddles the boundary.
+    Every figure in the weekly PDF (229.9 / 203.3 / 43.07 / 71.19) matches the
+    Start Time window exactly. Confirmed from the other side too: the 15-22 Aug
+    PDF's 217 / 198.6 equals the End Time window's 211.344 / 193.060 **plus**
+    #346, so Athena counted #346 in the earlier week. Nothing is lost by either
+    rule — #346 is counted once in each system, just in a different week.
 
-    Nothing is lost or double counted by either rule: both are clean partitions,
-    so #346 simply landed in the *previous* week's PDF (it started at 17:56, four
-    minutes before the rollover) and in this week's CAS figures. All-time totals
-    agree; only the boundary moves. When reconciling a week against the PDF,
-    check the straddling cycle before looking for missing data.
+    The deciding argument is scope consistency, not correctness. Every energy and
+    liquefaction figure in a weekly summary is transcribed by hand from the PDF,
+    so it is scoped to the PDF's window. Pairing those with cycle masses from a
+    different window would put numerator and denominator on different sets of
+    cycles, quietly corrupting every intensity, MWh/tCO2 and steam-efficiency
+    figure. Matching Athena keeps one window across the whole summary.
 
-    Falls back to Start Time only when End Time is missing (a truncated or
-    in-progress export row), since there is nothing better to key off.
+    History: bnjenga ruled for the completion rule on 2026-08-10, before it was
+    known that the PDF windows by Start Time; that finding (2026-08-31) and the
+    manual-entry scope argument reversed it the same day. If Athena ever moves to
+    completion-based weeks, set WEEK_ATTRIBUTION = "end" and recalculate the
+    affected weeks — no other code changes.
+
+    Under "end", falls back to Start Time when End Time is missing (a truncated
+    or in-progress export row), since there is nothing better to key off.
     """
+    if WEEK_ATTRIBUTION == "start":
+        return cycle.start_time
     return cycle.end_time or cycle.start_time
 
 
-def completed_in_window(start_dt: datetime, end_dt: datetime):
-    """SQL predicate for "this cycle completed inside [start_dt, end_dt)".
+def week_timestamp_column():
+    """cycle_week_timestamp() as a SQL expression, for ORDER BY and comparisons.
 
-    Mirrors cycle_week_timestamp() in the database: End Time decides, with Start
-    Time standing in only for rows that have no End Time.
+    Kept beside its Python twin so "which week is this cycle in" can never mean
+    two different things depending on whether the question is asked in the
+    database or in memory.
     """
+    if WEEK_ATTRIBUTION == "start":
+        return CarbonNestCycleData.start_time
+    return func.coalesce(CarbonNestCycleData.end_time, CarbonNestCycleData.start_time)
+
+
+def in_week_window(start_dt: datetime, end_dt: datetime):
+    """SQL predicate for "this cycle belongs to the week [start_dt, end_dt)".
+
+    Mirrors cycle_week_timestamp() in the database, honouring WEEK_ATTRIBUTION.
+    Was named completed_in_window() while the completion rule was the only one.
+    """
+    if WEEK_ATTRIBUTION == "start":
+        return and_(
+            CarbonNestCycleData.start_time >= start_dt,
+            CarbonNestCycleData.start_time < end_dt,
+        )
     return or_(
         and_(
             CarbonNestCycleData.end_time.isnot(None),
@@ -118,8 +150,8 @@ def completed_in_window(start_dt: datetime, end_dt: datetime):
 def get_filtered_cycles(
     session, start_dt: datetime, end_dt: datetime, series_filter: Optional[str] = None
 ) -> list:
-    """Every cycle that completed in [start_dt, end_dt), optionally one series."""
-    query = session.query(CarbonNestCycleData).filter(completed_in_window(start_dt, end_dt))
+    """Every cycle belonging to the week [start_dt, end_dt), optionally one series."""
+    query = session.query(CarbonNestCycleData).filter(in_week_window(start_dt, end_dt))
     if series_filter:
         query = query.filter(CarbonNestCycleData.series == series_filter)
     return query.all()
@@ -244,7 +276,7 @@ def create_or_update_weekly_summary(
     """
     week_start, week_end = get_carbon_nest_week_bounds(week_start)
 
-    # Cycles that COMPLETED in this week — see cycle_week_timestamp(). One cycle
+    # Cycles belonging to this week — see cycle_week_timestamp(). One cycle
     # belongs to exactly one week, whole, so the count, the FK back-reference and
     # every summed quantity below all agree on the same set of rows.
     cycles = get_filtered_cycles(session, week_start, week_end)
@@ -535,16 +567,16 @@ def get_weekly_metrics_by_series(
 def aggregate_cycles_by_series(session, start_date=None, end_date=None) -> dict:
     """Aggregate cycle data by series (1n3 vs 2n4), and by Nelion where known.
 
-    Windows on completion like every other aggregate in this module — see
-    cycle_week_timestamp(). This used to filter Start Time directly, so the same
-    database answered the same question two different ways depending on which
-    function you called: a cycle straddling a boundary was counted here but not
-    by get_filtered_cycles(). Bounds are inclusive calendar dates (end_date
-    covers its whole day) and either may be omitted for an open-ended range.
+    Uses the module's attribution rule like every other aggregate here — see
+    cycle_week_timestamp(). This used to filter Start Time inline, which happened
+    to agree with today's rule but hardcoded it, so the same database answered
+    the same question two ways whenever the rule changed. Bounds are inclusive
+    calendar dates (end_date covers its whole day) and either may be omitted for
+    an open-ended range.
     """
     lower = datetime.combine(start_date, time(0, 0)) if start_date else datetime.min
     upper = datetime.combine(end_date + timedelta(days=1), time(0, 0)) if end_date else datetime.max
-    cycles = session.query(CarbonNestCycleData).filter(completed_in_window(lower, upper)).all()
+    cycles = session.query(CarbonNestCycleData).filter(in_week_window(lower, upper)).all()
 
     def _blank():
         return {"cycles": 0, "ads_co2_kg": 0.0, "des_co2_kg": 0.0, "bag_co2_kg": 0.0, "total_kwh": 0.0}

@@ -10,8 +10,6 @@ APP_DIR = Path(__file__).resolve().parent
 
 import streamlit as st
 
-from sqlalchemy import func as sa_func
-
 from app.auth.authentication import logout, require_login
 from app.components.branding import (
     render_logo,
@@ -27,6 +25,7 @@ from app.services.carbon_nest_aggregation import (
     cycle_week_timestamp,
     get_carbon_nest_week_bounds,
     get_filtered_cycles,
+    week_timestamp_column,
 )
 from app.services.carbon_nest_calculations import mean_of_ratios, ratio_of_sums
 from app.services.carbon_nest_working_capacity import weekly_working_capacity_cached
@@ -286,10 +285,10 @@ def render_carbon_nest_home() -> None:
             .first()
         )
 
-        # A cycle belongs to the week it COMPLETED in, so "newest" and "which
-        # week is this in" both key off End Time (falling back to Start Time for
-        # rows with no End Time) — see cycle_week_timestamp().
-        completed_at = sa_func.coalesce(CarbonNestCycleData.end_time, CarbonNestCycleData.start_time)
+        # "Newest cycle" and "which week is this in" must agree with the week
+        # bucketing, so both key off the same attribution timestamp rather than
+        # hardcoding a column here — see cycle_week_timestamp().
+        completed_at = week_timestamp_column()
         latest_cycle = (
             session.query(CarbonNestCycleData)
             .order_by(completed_at.desc())

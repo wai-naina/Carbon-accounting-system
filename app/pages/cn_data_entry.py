@@ -15,6 +15,7 @@ from app.components.branding import get_brand_css, render_logo
 from app.database.connection import get_session, init_db
 from app.database.models import CarbonNestWeeklySummary, CarbonNestCycleData
 from app.services.carbon_nest_aggregation import (
+    WEEK_ATTRIBUTION,
     create_or_update_weekly_summary,
     get_filtered_cycles,
     list_week_options,
@@ -188,8 +189,9 @@ def main() -> None:
 
         session = get_session()
         try:
-            # Cycles that COMPLETED in this week — the same set the weekly
-            # summary will store, so this preview always matches what gets saved.
+            # Cycles belonging to this week under the module's attribution rule
+            # — the same set the weekly summary will store, so this preview
+            # always matches what gets saved. See cycle_week_timestamp().
             cycles_in_week = get_filtered_cycles(session, week_start, week_end)
 
             if cycles_in_week:
@@ -200,15 +202,30 @@ def main() -> None:
 
                 st.success(f"✅ Found **{len(cycles_in_week)}** cycles in this week")
 
-                spillover = [
-                    c for c in cycles_in_week
-                    if c.end_time and c.start_time < week_start <= c.end_time
-                ]
-                if spillover:
-                    st.caption(
+                # The straddling cycle sits at whichever edge the attribution rule
+                # leaves it on: under "start" it began inside this week and runs
+                # past the closing rollover; under "end" it began before the
+                # opening rollover and finished inside. Either way it counts here
+                # whole, and naming it explains any off-by-one against Athena.
+                if WEEK_ATTRIBUTION == "start":
+                    straddlers = [c for c in cycles_in_week if c.end_time and c.end_time >= week_end]
+                    straddle_note = (
+                        "↪️ Runs past the 18:00 rollover into next week but counts here "
+                        "in full (it started inside this week): "
+                    )
+                else:
+                    straddlers = [
+                        c for c in cycles_in_week
+                        if c.end_time and c.start_time < week_start <= c.end_time
+                    ]
+                    straddle_note = (
                         "↪️ Carried in from the previous week (started before the "
                         "18:00 rollover, completed after it): "
-                        + " · ".join(f"cycle {c.cycle_number}" for c in spillover)
+                    )
+                if straddlers:
+                    st.caption(
+                        straddle_note
+                        + " · ".join(f"cycle {c.cycle_number}" for c in straddlers)
                     )
 
                 series_counts: dict = {}
