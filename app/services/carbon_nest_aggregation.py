@@ -62,18 +62,32 @@ def get_series_filter() -> Optional[str]:
 def cycle_week_timestamp(cycle):
     """The timestamp that decides which Carbon Nest week a cycle belongs to.
 
-    A cycle counts toward the week in which it **completed**, matching Athena's
-    own weekly figure. A cycle running 17:12 -> 19:32 across the Saturday 18:00
-    rollover therefore belongs wholly to the new week: the closing week reports
-    90 cycles rather than 91, and the spillover cycle is picked up by the
-    following week. Cycles are never split — there is no such thing as half a
-    cycle, and every physical quantity on the row (CO2, kWh, steam) stays whole
-    and attached to exactly one week.
+    A cycle counts toward the week in which it **completed**. A cycle running
+    17:56 -> 19:36 across the Saturday 18:00 rollover therefore belongs wholly
+    to the new week: the closing week reports 43 cycles rather than 44, and the
+    straddling cycle is picked up by the following week. Cycles are never split
+    — there is no such thing as half a cycle, and every physical quantity on the
+    row (CO2, kWh, steam) stays whole and attached to exactly one week.
 
-    Note this differs from Athena's *Plant Cycles* CSV export, which windows by
-    Start Time — that export will hand you a straddling cycle in the closing
-    week's file even though it belongs to the next week. The weekly report
-    number is the one CAS matches, so import wide and let this do the bucketing.
+    **CAS deliberately differs from Athena here, and the difference is visible.**
+    Athena windows by Start Time — not just in the *Plant Cycles* CSV export but
+    in the weekly PDF too. Verified against the week of 22-29 Aug 2026, where
+    cycle #346 ran 17:56 -> 19:36 on the 22nd:
+
+        rule          cycles  desorbed   collected  ADS hrs  DES hrs
+        Start Time        43   229.905     203.308    43.072   71.193   <- PDF
+        End Time (CAS)    44   235.540     208.837    44.091   72.857
+
+    Every figure in the PDF (229.9 / 203.3 / 43.07 / 71.19) matches the Start
+    Time window exactly, so any earlier claim that the PDF follows the
+    completion rule was wrong. Expect CAS to read one cycle more or fewer than
+    the PDF in any week where a cycle straddles the boundary.
+
+    Nothing is lost or double counted by either rule: both are clean partitions,
+    so #346 simply landed in the *previous* week's PDF (it started at 17:56, four
+    minutes before the rollover) and in this week's CAS figures. All-time totals
+    agree; only the boundary moves. When reconciling a week against the PDF,
+    check the straddling cycle before looking for missing data.
 
     Falls back to Start Time only when End Time is missing (a truncated or
     in-progress export row), since there is nothing better to key off.
@@ -519,15 +533,18 @@ def get_weekly_metrics_by_series(
 
 
 def aggregate_cycles_by_series(session, start_date=None, end_date=None) -> dict:
-    """Aggregate cycle data by series (1n3 vs 2n4), and by Nelion where known."""
-    query = session.query(CarbonNestCycleData)
-    if start_date:
-        query = query.filter(CarbonNestCycleData.start_time >= datetime.combine(start_date, time(0, 0)))
-    if end_date:
-        query = query.filter(
-            CarbonNestCycleData.start_time < datetime.combine(end_date + timedelta(days=1), time(0, 0))
-        )
-    cycles = query.all()
+    """Aggregate cycle data by series (1n3 vs 2n4), and by Nelion where known.
+
+    Windows on completion like every other aggregate in this module — see
+    cycle_week_timestamp(). This used to filter Start Time directly, so the same
+    database answered the same question two different ways depending on which
+    function you called: a cycle straddling a boundary was counted here but not
+    by get_filtered_cycles(). Bounds are inclusive calendar dates (end_date
+    covers its whole day) and either may be omitted for an open-ended range.
+    """
+    lower = datetime.combine(start_date, time(0, 0)) if start_date else datetime.min
+    upper = datetime.combine(end_date + timedelta(days=1), time(0, 0)) if end_date else datetime.max
+    cycles = session.query(CarbonNestCycleData).filter(completed_in_window(lower, upper)).all()
 
     def _blank():
         return {"cycles": 0, "ads_co2_kg": 0.0, "des_co2_kg": 0.0, "bag_co2_kg": 0.0, "total_kwh": 0.0}

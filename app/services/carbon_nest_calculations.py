@@ -32,6 +32,43 @@ def _intensity(energy_kwh: float, co2_kg: float) -> Optional[float]:
     return energy_kwh / (co2_kg / 1000)
 
 
+def ratio_of_sums(numerator_kg: float, denominator_kg: float) -> Optional[float]:
+    """Stage efficiency (%) as total-out ÷ total-in across the whole window.
+
+    This is the convention CAS reports everywhere, and it is the
+    mass-balance-correct one: every kilogram carries the same weight no matter
+    which cycle delivered it. Athena's weekly PDF instead averages its
+    per-cycle percentage columns — see mean_of_ratios() — which weights a
+    0.023 kg stub cycle exactly as heavily as a 6 kg one.
+
+    None rather than 0 when nothing went in: the efficiency is undefined for an
+    empty window, and 0% would read as a total process failure.
+    """
+    if denominator_kg <= 0:
+        return None
+    return numerator_kg / denominator_kg * 100
+
+
+def mean_of_ratios(per_cycle_pct) -> Optional[float]:
+    """Athena's convention (%): the plain mean of its per-cycle percentage columns.
+
+    Reproduces the weekly PDF's "Collection efficiency (%)" from Athena's own
+    per-cycle BAG Efficiency, skipping rows where the column is blank (a
+    truncated export row) but keeping genuine zeros. For the week of
+    22-29 Aug 2026 that yields 88.32%, matching the PDF, against a true
+    mass-balance ratio of 88.43%.
+
+    Provided only so a week can be reconciled against the PDF — it never drives
+    emissions, and it is not the better performance number: short cycles skew it
+    hard. On Athena's DES Efficiency column one truncated adsorption step in
+    that same week produced a per-cycle 362%.
+    """
+    values = [v for v in per_cycle_pct if v is not None]
+    if not values:
+        return None
+    return sum(values) / len(values)
+
+
 def calculate_weekly_metrics(
     *,
     ads_co2_kg: float,

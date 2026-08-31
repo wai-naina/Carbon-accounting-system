@@ -28,6 +28,7 @@ from app.services.carbon_nest_aggregation import (
     get_carbon_nest_week_bounds,
     get_filtered_cycles,
 )
+from app.services.carbon_nest_calculations import mean_of_ratios, ratio_of_sums
 from app.services.carbon_nest_working_capacity import weekly_working_capacity_cached
 
 
@@ -327,8 +328,17 @@ def render_carbon_nest_home() -> None:
         # DES/BAG Efficiency columns. Collection is collected ÷ DESORBED — it
         # previously meant collected ÷ adsorbed here, which spanned two stages
         # under a name the plant already uses for just one of them.
-        desorption_efficiency = (live_des / live_ads * 100) if live_ads > 0 else None
-        collection_efficiency = (live_bag / live_des * 100) if live_des > 0 else None
+        #
+        # All four tiles are ratios of weekly TOTALS (ratio_of_sums), not means
+        # of Athena's per-cycle percentage columns. The PDF uses the mean, so its
+        # figures sit slightly off these — 88.32% vs 88.43% for collection in the
+        # week of 22-29 Aug 2026. The mean is computed alongside purely so a week
+        # can be reconciled against the PDF; see mean_of_ratios() for why it is
+        # not the better performance number.
+        desorption_efficiency = ratio_of_sums(live_des, live_ads)
+        collection_efficiency = ratio_of_sums(live_bag, live_des)
+        athena_desorption_pct = mean_of_ratios(c.des_efficiency for c in live_cycles)
+        athena_collection_pct = mean_of_ratios(c.bag_efficiency for c in live_cycles)
 
         # Steam intensity (kg steam per tonne CO2 captured) needs the weekly
         # gross-captured figure, so like liquefaction efficiency it comes from
@@ -344,23 +354,17 @@ def render_carbon_nest_home() -> None:
         # entry, not per-cycle), so unlike collection efficiency this can't be
         # computed "live" from this week's raw cycles — it uses the most recently
         # calculated week's own bag/liquefied figures instead.
-        if latest_summary and latest_summary.total_bag_co2_kg:
-            liquefaction_efficiency = (
-                (latest_summary.liquefied_co2_kg or 0) / latest_summary.total_bag_co2_kg * 100
-            )
-        else:
-            liquefaction_efficiency = None
+        liquefaction_efficiency = ratio_of_sums(
+            latest_summary.liquefied_co2_kg or 0, latest_summary.total_bag_co2_kg or 0
+        ) if latest_summary else None
 
         # Capture efficiency closes the chain (liquefied ÷ adsorbed). Like
         # liquefaction efficiency it has to come from the calculated week rather
         # than the live cycles, because liquefied CO2 is only ever recorded at the
         # weekly level — hence the two "latest week" tiles beside two live ones.
-        if latest_summary and latest_summary.total_ads_co2_kg:
-            capture_efficiency = (
-                (latest_summary.liquefied_co2_kg or 0) / latest_summary.total_ads_co2_kg * 100
-            )
-        else:
-            capture_efficiency = None
+        capture_efficiency = ratio_of_sums(
+            latest_summary.liquefied_co2_kg or 0, latest_summary.total_ads_co2_kg or 0
+        ) if latest_summary else None
 
         total_weeks = session.query(CarbonNestWeeklySummary).count()
 
@@ -474,7 +478,11 @@ def render_carbon_nest_home() -> None:
         "this week's live cycles; **Liquefaction** (liquefied ÷ collected) and **Capture** "
         "(liquefied ÷ adsorbed — the overall chain) come from the most recently calculated week, "
         "since liquefied CO₂ is only ever logged at the weekly level. The weekly PDF reports all "
-        "four on a single week, where Desorption × Collection × Liquefaction = Capture exactly."
+        "four on a single week, where Desorption × Collection × Liquefaction = Capture exactly.\n\n"
+        "All four are **ratios of weekly totals** (total out ÷ total in), so every kilogram counts "
+        "the same regardless of which cycle brought it in. Athena's weekly PDF instead **averages "
+        "its per-cycle percentage columns**, which weights a 0.023 kg stub cycle as heavily as a "
+        "6 kg one — so expect its figures to sit a little off these."
     )
 
     eff_col1, eff_col2, eff_col3, eff_col4 = st.columns(4)
@@ -483,7 +491,7 @@ def render_carbon_nest_home() -> None:
             render_stat_tile(
                 "🔥", "purple", "Desorption Efficiency",
                 f"{desorption_efficiency:.1f}%" if desorption_efficiency is not None else "—",
-                "Desorbed ÷ Adsorbed, this week",
+                "Desorbed ÷ Adsorbed, this week · ratio of totals",
             ),
             unsafe_allow_html=True,
         )
@@ -492,7 +500,7 @@ def render_carbon_nest_home() -> None:
             render_stat_tile(
                 "🔄", "teal", "Collection Efficiency",
                 f"{collection_efficiency:.1f}%" if collection_efficiency is not None else "—",
-                "Collected ÷ Desorbed, this week",
+                "Collected ÷ Desorbed, this week · ratio of totals",
             ),
             unsafe_allow_html=True,
         )
@@ -501,7 +509,7 @@ def render_carbon_nest_home() -> None:
             render_stat_tile(
                 "❄️", "blue", "Liquefaction Efficiency",
                 f"{liquefaction_efficiency:.1f}%" if liquefaction_efficiency is not None else "—",
-                "Liquefied ÷ Collected, latest week",
+                "Liquefied ÷ Collected, latest week · ratio of totals",
             ),
             unsafe_allow_html=True,
         )
@@ -510,9 +518,28 @@ def render_carbon_nest_home() -> None:
             render_stat_tile(
                 "🎯", "green", "Capture Efficiency",
                 f"{capture_efficiency:.1f}%" if capture_efficiency is not None else "—",
-                "Liquefied ÷ Adsorbed, latest week · overall",
+                "Liquefied ÷ Adsorbed, latest week · ratio of totals",
             ),
             unsafe_allow_html=True,
+        )
+
+    # Athena's own convention beside ours, so a week can be reconciled against the
+    # weekly PDF without anyone recomputing it by hand. Only the two live tiles
+    # have a per-cycle column to average — liquefaction is logged weekly, never
+    # per cycle, so it has no mean-of-ratios counterpart.
+    athena_bits = [
+        f"{label} {value:.2f}%"
+        for label, value in (
+            ("Desorption", athena_desorption_pct),
+            ("Collection", athena_collection_pct),
+        )
+        if value is not None
+    ]
+    if athena_bits:
+        st.caption(
+            "The same live cycles under Athena's convention (mean of its per-cycle "
+            "percentage columns): " + " · ".join(athena_bits) + " — compare *these* against "
+            "the weekly PDF, not the tiles above."
         )
 
     tile_col1, tile_col2 = st.columns(2)
