@@ -1,3 +1,0 @@
-chromium
-fonts-liberation
-fonts-dejavu-core
