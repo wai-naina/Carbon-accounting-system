@@ -637,6 +637,13 @@ def render_carbon_nest_home() -> None:
                     ),
                     unsafe_allow_html=True,
                 )
+                if group["missing_config_prefixes"]:
+                    missing = ", ".join(group["missing_config_prefixes"])
+                    st.caption(
+                        f"⚠️ {len(group['missing_config_cycle_ids'])} cycle(s) excluded — "
+                        f"no sorbent config for {missing}. Add it in Admin → Sorbent Config "
+                        "so they count toward this average."
+                    )
                 if group["config_anomalies"]:
                     bad_cycles = ", ".join(str(a["cycle_number"]) for a in group["config_anomalies"])
                     st.caption(f"⚠️ cycle {bad_cycles} has an unusual implied bed volume — check sorbent config")

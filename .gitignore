@@ -48,6 +48,10 @@ data/*.db
 .env
 .env.local
 
+# Streamlit secrets - real credentials, never committed.
+# .streamlit/secrets.toml.example is the committed template.
+.streamlit/secrets.toml
+
 # OS
 .DS_Store
 Thumbs.db

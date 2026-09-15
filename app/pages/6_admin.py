@@ -13,6 +13,7 @@ from app.auth.security import hash_password
 from app.components.branding import get_brand_css, render_logo
 from app.database.connection import get_session, init_db
 from app.database.models import AuditLog, User, WeeklySummary, CycleData, SystemConfig, CarbonNestSorbentConfig
+from app.services.carbon_nest_working_capacity import known_module_prefixes
 
 
 def log_action(session, user_id, action, table_name, record_id, field_name=None, old=None, new=None):
@@ -339,26 +340,31 @@ def main() -> None:
 
             st.markdown("#### Current Configuration")
 
-            sc_col1, sc_col2, sc_col3 = st.columns(3)
-            for sc_col, prefix in zip((sc_col1, sc_col2, sc_col3), ("N1", "N2", "N1N2")):
-                with sc_col:
-                    latest = (
-                        session.query(CarbonNestSorbentConfig)
-                        .filter(CarbonNestSorbentConfig.module_prefix == prefix)
-                        .order_by(CarbonNestSorbentConfig.effective_date.desc())
-                        .first()
-                    )
-                    st.markdown(f"**{prefix}**")
-                    if latest:
-                        eff = (
-                            latest.effective_date.strftime("%Y-%m-%d")
-                            if latest.effective_date else "N/A"
+            # Driven by the data, not a fixed list: a newly commissioned Nelion
+            # appears here (as "No config set") as soon as its cycles import,
+            # which is the cue to add its row.
+            sc_prefixes = known_module_prefixes(session)
+            for sc_row_start in range(0, len(sc_prefixes), 3):
+                sc_chunk = sc_prefixes[sc_row_start:sc_row_start + 3]
+                for sc_col, prefix in zip(st.columns(3), sc_chunk):
+                    with sc_col:
+                        latest = (
+                            session.query(CarbonNestSorbentConfig)
+                            .filter(CarbonNestSorbentConfig.module_prefix == prefix)
+                            .order_by(CarbonNestSorbentConfig.effective_date.desc())
+                            .first()
                         )
-                        st.metric("Sorbent Charge (kg)", f"{latest.sorbent_charge_kg:g}")
-                        st.metric("Bed Volume (m³)", f"{latest.bed_volume_m3:g}")
-                        st.caption(f"Effective: {eff}")
-                    else:
-                        st.info("No config set.")
+                        st.markdown(f"**{prefix}**")
+                        if latest:
+                            eff = (
+                                latest.effective_date.strftime("%Y-%m-%d")
+                                if latest.effective_date else "N/A"
+                            )
+                            st.metric("Sorbent Charge (kg)", f"{latest.sorbent_charge_kg:g}")
+                            st.metric("Bed Volume (m³)", f"{latest.bed_volume_m3:g}")
+                            st.caption(f"Effective: {eff}")
+                        else:
+                            st.info("No config set.")
 
             st.divider()
 
@@ -367,7 +373,19 @@ def main() -> None:
                 sf_col1, sf_col2 = st.columns(2)
 
                 with sf_col1:
-                    sc_prefix = st.selectbox("Module Prefix *", options=["N1", "N2", "N1N2"])
+                    sc_prefix_options = known_module_prefixes(session) + ["Other…"]
+                    sc_prefix_choice = st.selectbox(
+                        "Module Prefix *", options=sc_prefix_options,
+                        help="Prefixes seen in imported cycle data. Pick \"Other…\" to "
+                             "enter one that has not been imported yet.",
+                    )
+                    sc_prefix_custom = st.text_input(
+                        "New prefix", placeholder="e.g. N1N2N3",
+                        disabled=sc_prefix_choice != "Other…",
+                    ).strip()
+                    sc_prefix = (
+                        sc_prefix_custom if sc_prefix_choice == "Other…" else sc_prefix_choice
+                    )
                     sc_effective_date = st.date_input("Effective Date *")
 
                 with sf_col2:
@@ -380,6 +398,8 @@ def main() -> None:
 
                 if sc_submitted:
                     sc_errors = []
+                    if not sc_prefix:
+                        sc_errors.append("Module prefix is required")
                     if sc_charge <= 0:
                         sc_errors.append("Sorbent charge must be positive")
                     if sc_volume <= 0:

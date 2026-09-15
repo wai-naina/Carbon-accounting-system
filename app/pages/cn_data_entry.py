@@ -277,6 +277,10 @@ def main() -> None:
                 "fan_n2_m2": "fan_n2_m2_kwh",
                 "fan_n2_m3": "fan_n2_m3_kwh",
                 "fan_n2_m4": "fan_n2_m4_kwh",
+                "fan_n3_m1": "fan_n3_m1_kwh",
+                "fan_n3_m2": "fan_n3_m2_kwh",
+                "fan_n3_m3": "fan_n3_m3_kwh",
+                "fan_n3_m4": "fan_n3_m4_kwh",
                 "water_pumps": "water_pumps_kwh",
                 "compressor_a": "compressor_a_kwh",
                 "compressor_b": "compressor_b_kwh",
@@ -360,6 +364,18 @@ def main() -> None:
             fan_n2_m1 = pdf_input("N2 M1 Fan (kWh)", "fan_n2_m1", "COMPONENT CONSUMPTIONS → N2 M1 Fan")
             fan_n2_m4 = pdf_input("N2 M4 Fan (kWh)", "fan_n2_m4", "COMPONENT CONSUMPTIONS → N2 M4 Fan")
 
+        # N3 meters each module separately, as N2 does. Zero for any week
+        # before it was commissioned, which is what the PDF prints too.
+        n3_col1, n3_col2, n3_col3, n3_col4 = st.columns(4)
+        with n3_col1:
+            fan_n3_m1 = pdf_input("N3 M1 Fan (kWh)", "fan_n3_m1", "COMPONENT CONSUMPTIONS → N3 M1 Fan")
+        with n3_col2:
+            fan_n3_m2 = pdf_input("N3 M2 Fan (kWh)", "fan_n3_m2", "COMPONENT CONSUMPTIONS → N3 M2 Fan")
+        with n3_col3:
+            fan_n3_m3 = pdf_input("N3 M3 Fan (kWh)", "fan_n3_m3", "COMPONENT CONSUMPTIONS → N3 M3 Fan")
+        with n3_col4:
+            fan_n3_m4 = pdf_input("N3 M4 Fan (kWh)", "fan_n3_m4", "COMPONENT CONSUMPTIONS → N3 M4 Fan")
+
         st.markdown("#### Tier 3 — Skid components")
         util_col1, util_col2, util_col3 = st.columns(3)
         with util_col1:
@@ -393,7 +409,11 @@ def main() -> None:
         # ------------------------------------------------------------------
         st.markdown("#### Reconciliation")
 
-        fans_total = fan_n1_m1n2 + fan_n1_m3n4 + fan_n2_m1 + fan_n2_m2 + fan_n2_m3 + fan_n2_m4
+        fans_total = (
+            fan_n1_m1n2 + fan_n1_m3n4
+            + fan_n2_m1 + fan_n2_m2 + fan_n2_m3 + fan_n2_m4
+            + fan_n3_m1 + fan_n3_m2 + fan_n3_m3 + fan_n3_m4
+        )
         fans_total_eff = fans_total or csv_fans
         fan_standby = fans_total_eff - csv_fans
 
@@ -463,9 +483,10 @@ def main() -> None:
             )
         if fan_standby < 0:
             blocking.append(
-                f"**Fan standby is negative ({fan_standby:,.1f} kWh).** The six fan "
+                f"**Fan standby is negative ({fan_standby:,.1f} kWh).** The per-fan "
                 f"readings ({fans_total_eff:,.1f}) total less than the CSV's in-cycle "
-                f"fan energy ({csv_fans:,.1f})."
+                f"fan energy ({csv_fans:,.1f}) — check that every commissioned "
+                f"Nelion's fans are entered above."
             )
         if ct_standby < 0:
             blocking.append(
@@ -536,6 +557,10 @@ def main() -> None:
                     fan_n2_m2_kwh=fan_n2_m2,
                     fan_n2_m3_kwh=fan_n2_m3,
                     fan_n2_m4_kwh=fan_n2_m4,
+                    fan_n3_m1_kwh=fan_n3_m1,
+                    fan_n3_m2_kwh=fan_n3_m2,
+                    fan_n3_m3_kwh=fan_n3_m3,
+                    fan_n3_m4_kwh=fan_n3_m4,
                     water_pumps_kwh=water_pumps,
                     compressor_a_kwh=compressor_a,
                     compressor_b_kwh=compressor_b,

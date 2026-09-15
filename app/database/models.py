@@ -295,7 +295,7 @@ class CarbonNestWeeklySummary(Base):
     #   utility skid = utility_skid_kwh
     #   support      = support_infra_kwh (Tier 1)
     utility_skid_kwh = Column(Float)  # PDF "Utility Skid Energy" — parent meter
-    fans_total_kwh = Column(Float)  # derived: sum of the six per-fan readings below
+    fans_total_kwh = Column(Float)  # derived: sum of the per-fan readings below
     # Derived: plant_energy_kwh - (boilers + liquefaction + fans + skid).
     # Instrument error, stored explicitly rather than silently absorbed so it
     # stays auditable. ~0.5% on the 2026-08-22 week.
@@ -305,17 +305,26 @@ class CarbonNestWeeklySummary(Base):
     # Component detail, for optimisation and for finding what's drawing power.
     # Diagnostics only: nothing here feeds an emissions figure.
     #
-    # All six fan readings are transcribed verbatim from the PDF rather than
-    # rolled up, because N1's two fans each serve a *module pair* spanning both
-    # series (N1 M1n2 covers M1 and M2), so series attribution isn't extractable
-    # from these meters at all. Keeping them separate costs nothing now and is
-    # the groundwork for per-Nelion attribution later.
+    # Every fan reading is transcribed verbatim from the PDF rather than rolled
+    # up, because N1's two fans each serve a *module pair* spanning both series
+    # (N1 M1n2 covers M1 and M2), so series attribution isn't extractable from
+    # these meters at all. Keeping them separate costs nothing now and is the
+    # groundwork for per-Nelion attribution later.
+    #
+    # N3 came online in the week ending 2026-09-05 and, like N2, meters each
+    # module separately. Its fans MUST be summed into fans_total_kwh: that total
+    # is reconciled against the CSV's in-cycle fan energy, which already
+    # includes N3's cycles, so omitting them drives fan_standby_kwh negative.
     fan_n1_m1n2_kwh = Column(Float)
     fan_n1_m3n4_kwh = Column(Float)
     fan_n2_m1_kwh = Column(Float)
     fan_n2_m2_kwh = Column(Float)
     fan_n2_m3_kwh = Column(Float)
     fan_n2_m4_kwh = Column(Float)
+    fan_n3_m1_kwh = Column(Float)
+    fan_n3_m2_kwh = Column(Float)
+    fan_n3_m3_kwh = Column(Float)
+    fan_n3_m4_kwh = Column(Float)
     # Derived: fans_total_kwh - fans_kwh (the CSV's in-cycle sum). Fan draw
     # between cycles; the PDF gives no process/standby split for fans.
     fan_standby_kwh = Column(Float)
@@ -446,7 +455,13 @@ class AuditLog(Base):
 
 
 class CarbonNestSorbentConfig(Base):
-    """Versioned sorbent charge / bed volume per module prefix (N1, N2, N1N2).
+    """Versioned sorbent charge / bed volume per module prefix.
+
+    Prefixes are whatever SCADA exports ahead of the "-" in a Module label —
+    "N1", "N2", "N1N2" at commissioning, plus "N3"/"N1N2N3" once Nelion 3 came
+    online. Open-ended by design: a row is needed for every prefix that
+    appears in cycle data, or that module's cycles have no bed-volume
+    denominator and drop out of the working-capacity average.
 
     These are plant configuration, not measured data — but they change when a
     sorbent bed is reloaded, and a flat "current value" would silently rewrite
@@ -460,7 +475,7 @@ class CarbonNestSorbentConfig(Base):
     __tablename__ = "carbon_nest_sorbent_config"
 
     id = Column(Integer, primary_key=True)
-    module_prefix = Column(String, nullable=False)  # "N1", "N2", "N1N2"
+    module_prefix = Column(String, nullable=False)  # e.g. "N1", "N1N2", "N1N2N3"
     effective_date = Column(DateTime, nullable=False)
     sorbent_charge_kg = Column(Float, nullable=False)
     bed_volume_m3 = Column(Float, nullable=False)

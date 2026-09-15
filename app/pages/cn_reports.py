@@ -16,8 +16,66 @@ from app.database.models import CarbonNestWeeklySummary
 from app.pages.cn_dashboard import load_weekly_df_cached
 from app.services.carbon_nest_aggregation import aggregate_cycles_by_series_cached
 from app.services.carbon_nest_calculations import get_series_display_name
-from app.services.export import weekly_summaries_to_excel
-from app.services.pdf_report import generate_weekly_pdf_report
+from app.services.export import week_report_to_csv, weekly_summaries_to_excel
+from app.services.html_report import generate_weekly_html_report
+from app.services.pdf_support import pdf_export_enabled, pdf_unavailable_note
+from app.services.report_data import build_week_report_context
+
+
+def _render_fallback_downloads(week_start, week_label: str, series_filter) -> None:
+    """The report as HTML or CSV, for when the PDF path can't run here.
+
+    Behind a button rather than generated on every rerun: the HTML embeds
+    plotly.js so the file works offline, which makes it a few megabytes to
+    build, and Streamlit reruns this page on every interaction.
+    """
+    ready = st.session_state.get("cn_fallback_week_key") == week_start
+
+    if st.button(
+        "📄 Prepare HTML & CSV report", type="primary", width="stretch",
+        key="cn_generate_fallback",
+    ):
+        with st.spinner("Building report…"):
+            session = get_session()
+            try:
+                ctx = build_week_report_context(session, week_start, series_filter)
+                st.session_state["cn_html_text"] = generate_weekly_html_report(
+                    session, week_start, series_filter, context=ctx
+                )
+                st.session_state["cn_csv_bytes"] = week_report_to_csv(ctx)
+                st.session_state["cn_fallback_week_key"] = week_start
+            finally:
+                session.close()
+        ready = True
+        st.success("✅ Report ready — download below.")
+
+    if not ready:
+        return
+
+    html_col, csv_col = st.columns(2)
+    with html_col:
+        st.download_button(
+            "📥 HTML",
+            data=st.session_state["cn_html_text"],
+            file_name=f"carbon_nest_weekly_report_{week_start.strftime('%Y%m%d')}.html",
+            mime="text/html",
+            width="stretch",
+            key="cn_download_html",
+        )
+    with csv_col:
+        st.download_button(
+            "📥 CSV",
+            data=st.session_state["cn_csv_bytes"],
+            file_name=f"carbon_nest_weekly_report_{week_start.strftime('%Y%m%d')}.csv",
+            mime="text/csv",
+            width="stretch",
+            key="cn_download_csv",
+        )
+    st.caption(
+        f"{week_label} — the HTML file holds the same figures and charts as the PDF and "
+        "opens in any browser (its charts are interactive, and it prints to PDF from there). "
+        "The CSV is the headline numbers only."
+    )
 
 
 def main() -> None:
@@ -130,7 +188,8 @@ def main() -> None:
         pdf_col, excel_col = st.columns(2)
 
         with pdf_col:
-            st.markdown("#### 📄 Weekly PDF Report")
+            pdf_available = pdf_export_enabled()
+            st.markdown("#### 📄 Weekly Report")
             st.caption(
                 "One week's Capture & Removal Efficiency, what drove it, and how it compares "
                 "to recent weeks — a shareable, printable summary with the Octavia Carbon logo."
@@ -145,26 +204,63 @@ def main() -> None:
                 index=len(pdf_week_labels) - 1, key="cn_pdf_week_select",
             )
             pdf_week_start = df.iloc[pdf_week_idx]["start_date"]
+            week_label = pdf_week_labels[pdf_week_idx]
 
-            if st.button("🖨️ Generate PDF Report", type="primary", width="stretch", key="cn_generate_pdf"):
-                with st.spinner("Generating PDF report — rendering charts, this takes a few seconds…"):
-                    session = get_session()
-                    try:
-                        st.session_state["cn_pdf_bytes"] = generate_weekly_pdf_report(session, pdf_week_start, series_filter)
-                        st.session_state["cn_pdf_week_key"] = pdf_week_start
-                    finally:
-                        session.close()
-                st.success("✅ Report ready — download below.")
+            if pdf_available:
+                if st.button("🖨️ Generate PDF Report", type="primary", width="stretch", key="cn_generate_pdf"):
+                    with st.spinner("Generating PDF report — rendering charts, this takes a few seconds…"):
+                        # Imported here, not at module scope: this is the only
+                        # branch that needs reportlab and kaleido, and the page
+                        # must still render its fallback on a host without them.
+                        from app.services.pdf_report import generate_weekly_pdf_report
 
-            if st.session_state.get("cn_pdf_bytes") and st.session_state.get("cn_pdf_week_key") == pdf_week_start:
-                st.download_button(
-                    f"📥 Download PDF — {pdf_week_labels[pdf_week_idx]}",
-                    data=st.session_state["cn_pdf_bytes"],
-                    file_name=f"carbon_nest_weekly_report_{pdf_week_start.strftime('%Y%m%d')}.pdf",
-                    mime="application/pdf",
-                    width="stretch",
-                    key="cn_download_pdf",
-                )
+                        session = get_session()
+                        try:
+                            st.session_state["cn_pdf_bytes"] = generate_weekly_pdf_report(
+                                session, pdf_week_start, series_filter
+                            )
+                            st.session_state["cn_pdf_week_key"] = pdf_week_start
+                            st.session_state.pop("cn_pdf_error", None)
+                            st.session_state.pop("cn_pdf_error_week", None)
+                        except Exception as exc:
+                            # A browser was detected but the render still failed —
+                            # a downloaded Chrome with missing system libraries
+                            # looks exactly like this. Offer the fallback rather
+                            # than showing the traceback.
+                            st.session_state.pop("cn_pdf_bytes", None)
+                            st.session_state["cn_pdf_error"] = f"{type(exc).__name__}: {exc}"
+                            # Scoped to the week it happened on, so switching
+                            # weeks doesn't leave a stale warning behind.
+                            st.session_state["cn_pdf_error_week"] = pdf_week_start
+                        finally:
+                            session.close()
+                    if not st.session_state.get("cn_pdf_error"):
+                        st.success("✅ Report ready — download below.")
+
+                if st.session_state.get("cn_pdf_bytes") and st.session_state.get("cn_pdf_week_key") == pdf_week_start:
+                    st.download_button(
+                        f"📥 Download PDF — {week_label}",
+                        data=st.session_state["cn_pdf_bytes"],
+                        file_name=f"carbon_nest_weekly_report_{pdf_week_start.strftime('%Y%m%d')}.pdf",
+                        mime="application/pdf",
+                        width="stretch",
+                        key="cn_download_pdf",
+                    )
+
+                if (
+                    st.session_state.get("cn_pdf_error")
+                    and st.session_state.get("cn_pdf_error_week") == pdf_week_start
+                ):
+                    st.warning(
+                        "PDF rendering failed on this host, so the same report is offered "
+                        "below as HTML or CSV instead."
+                    )
+                    with st.expander("Details"):
+                        st.code(st.session_state["cn_pdf_error"])
+                    _render_fallback_downloads(pdf_week_start, week_label, series_filter)
+            else:
+                st.info(pdf_unavailable_note())
+                _render_fallback_downloads(pdf_week_start, week_label, series_filter)
 
         with excel_col:
             st.markdown("#### 📊 Full History (Excel)")

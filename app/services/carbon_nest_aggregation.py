@@ -237,6 +237,10 @@ def create_or_update_weekly_summary(
     fan_n2_m2_kwh: float = 0.0,
     fan_n2_m3_kwh: float = 0.0,
     fan_n2_m4_kwh: float = 0.0,
+    fan_n3_m1_kwh: float = 0.0,
+    fan_n3_m2_kwh: float = 0.0,
+    fan_n3_m3_kwh: float = 0.0,
+    fan_n3_m4_kwh: float = 0.0,
     water_pumps_kwh: float = 0.0,
     compressor_a_kwh: float = 0.0,
     compressor_b_kwh: float = 0.0,
@@ -306,11 +310,17 @@ def create_or_update_weekly_summary(
     liquefaction_standby_kwh = safe_value(liquefaction_standby_kwh)
     liquefaction_energy_kwh = liquefaction_active_transfer_kwh + liquefaction_standby_kwh
 
-    # --- Fans: six per-fan PDF readings, standby derived against the CSV ----
+    # --- Fans: per-fan PDF readings, standby derived against the CSV --------
+    # Every commissioned fan has to appear here. fan_standby_kwh is the
+    # difference against energy["fans_kwh"], which is summed from the cycle
+    # CSV and so covers every Nelion that ran — a fan omitted from this list
+    # is not merely missing, it is subtracted, pushing standby negative.
     fan_readings = [
         safe_value(fan_n1_m1n2_kwh), safe_value(fan_n1_m3n4_kwh),
         safe_value(fan_n2_m1_kwh), safe_value(fan_n2_m2_kwh),
         safe_value(fan_n2_m3_kwh), safe_value(fan_n2_m4_kwh),
+        safe_value(fan_n3_m1_kwh), safe_value(fan_n3_m2_kwh),
+        safe_value(fan_n3_m3_kwh), safe_value(fan_n3_m4_kwh),
     ]
     fans_metered = sum(fan_readings)
     fans_total_kwh = fans_metered if fans_metered > 0 else energy["fans_kwh"]
@@ -415,6 +425,10 @@ def create_or_update_weekly_summary(
     summary.fan_n2_m2_kwh = fan_readings[3]
     summary.fan_n2_m3_kwh = fan_readings[4]
     summary.fan_n2_m4_kwh = fan_readings[5]
+    summary.fan_n3_m1_kwh = fan_readings[6]
+    summary.fan_n3_m2_kwh = fan_readings[7]
+    summary.fan_n3_m3_kwh = fan_readings[8]
+    summary.fan_n3_m4_kwh = fan_readings[9]
     summary.fan_standby_kwh = fan_standby_kwh
     summary.water_pumps_kwh = water_pumps_kwh
     summary.compressor_a_kwh = compressor_a_kwh

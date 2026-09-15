@@ -16,7 +16,6 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-import kaleido
 import pandas as pd
 import plotly.graph_objects as go
 from reportlab.lib import colors
@@ -39,16 +38,17 @@ from reportlab.platypus import (
 )
 
 from app.components.branding import get_logo_path
-from app.components.charts import (
-    CN_ENERGY_SUBSYSTEMS,
-    apply_chart_layout,
-    emissions_breakdown_pie,
-    waterfall_chart,
+from app.components.charts import emissions_breakdown_pie, waterfall_chart
+from app.services.report_data import (
+    WeekReportContext,
+    boundaries_note,
+    boundary_note,
+    build_narrative,
+    build_week_report_context,
+    pct,
+    recent_weeks_trend_chart,
+    single_week_subsystem_chart,
 )
-from app.database.models import CarbonNestWeeklySummary
-from app.pages.cn_dashboard import load_weekly_df_cached
-from app.services.carbon_nest_aggregation import get_grid_ef_cached, get_weekly_metrics_by_series
-from app.services.carbon_nest_working_capacity import weekly_working_capacity_cached
 
 # --- Print-safe brand palette -------------------------------------------------
 # The live app's neon greens/reds/teals are tuned for a dark screen background;
@@ -95,17 +95,20 @@ def _register_unicode_font() -> tuple[str, str, str]:
             r"C:\Windows\Fonts\ariali.ttf",
         ),
         (
-            # Installed via packages.txt's `fonts-liberation` on the hosted
-            # deployment (Streamlit Cloud's base image has no fonts of its
-            # own beyond the bare minimum) — checked first on Linux since
-            # it's guaranteed present there, unlike DejaVu below.
+            # Was installed via packages.txt's `fonts-liberation` on the hosted
+            # deployment (Streamlit Cloud's base image has no fonts of its own
+            # beyond the bare minimum). That file is currently parked as
+            # packages.txt.disabled — see README — so this path is absent on
+            # cloud for now, which is harmless while the PDF path is disabled
+            # there too. Still checked first on Linux: restoring packages.txt
+            # brings it back, and it's guaranteed present then, unlike DejaVu.
             "PDFReportSans",
             "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
             "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
             "/usr/share/fonts/truetype/liberation/LiberationSans-Italic.ttf",
         ),
         (
-            # Installed via packages.txt's `fonts-dejavu-core` as a second
+            # Was installed via packages.txt's `fonts-dejavu-core` as a second
             # option in case the Liberation path above ever differs.
             "PDFReportSans",
             "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
@@ -160,10 +163,17 @@ def _ensure_chrome() -> None:
     instead of once. Trade-off: the browser now stays resident in memory for
     the lifetime of the server process instead of only during rendering —
     worth watching if the hosting tier is memory-constrained.
+
+    kaleido is imported here rather than at module scope so that importing this
+    module — which the reports page does unconditionally, to decide whether to
+    offer a PDF at all — cannot fail on a host where kaleido isn't installed.
+    The page needs to render its fallback there, not raise on import.
     """
     global _chrome_ready
     if _chrome_ready:
         return
+    import kaleido
+
     kaleido.get_chrome_sync()
     kaleido.start_sync_server(silence_warnings=True)
     _chrome_ready = True
@@ -222,60 +232,6 @@ def _kpi_card(label: str, value: str, sub: str, accent_hex: str, styles: dict) -
         ("TOPPADDING", (0, 0), (-1, 0), 8),
     ]))
     return inner
-
-
-def _pct(value: Optional[float]) -> str:
-    """A percentage for a KPI card, or an em dash when the ratio is undefined."""
-    return f"{value:.1f}%" if value is not None else "—"
-
-
-def _boundary_note(row: pd.Series) -> str:
-    """Subtitle for the Gross Captured card, naming the boundary in force.
-
-    Series-filtered reports can only use the capture boundary — liquefaction is
-    a single shared downstream process with no per-series liquefied figure.
-    """
-    if row.get("boundary") == "capture":
-        return "Collected CO₂ (capture boundary)"
-    return "Liquefied CO₂ (credit-bearing)"
-
-
-def _boundaries_note(row: pd.Series) -> str:
-    """Explain the two boundaries against what this week's numbers actually did.
-
-    This was previously a fixed sentence asserting that the liquefied boundary
-    always carries lower total emissions. That is only true while liquefaction
-    efficiency is at or below 100%. The week of 2026-08-01 liquefied 353.0 kg
-    against 349.2 kg collected — a bag inventory carried over from an earlier
-    week was drawn down — and boundary B's emissions came out *above* A's, so
-    the fixed sentence printed a false statement.
-    """
-    bag = row.get("capture_gross_kg") or 0
-    liq = row.get("liquefied_gross_kg") or 0
-    cap_em = row.get("capture_total_emissions_kg") or 0
-    liq_em = row.get("liquefied_total_emissions_kg") or 0
-
-    if liq > bag and bag > 0:
-        return (
-            f"Liquefaction exceeded collection this week — {liq:,.1f} kg liquefied against "
-            f"{bag:,.1f} kg collected, or {liq / bag * 100:,.1f}% — so bagged CO₂ held over "
-            f"from an earlier week was drawn down. Liquefaction efficiency above 100% is an "
-            f"inventory movement, not a yield: read it across several weeks rather than one. "
-            f"Because boundary B's product is the larger of the two, it carries the higher "
-            f"embodied charge here, and its total emissions ({liq_em:,.1f} kg) sit above "
-            f"boundary A's ({cap_em:,.1f} kg) — the reverse of a normal week."
-        )
-
-    direction = "lower" if liq_em < cap_em else "higher"
-    return (
-        f"The liquefied boundary carries <i>{direction}</i> total emissions but a "
-        f"<i>worse</i> net removal — embodied emissions are charged per tonne of product, so "
-        f"they shrink with the denominator. CO₂ vented during liquefaction reduces product "
-        f"without being charged as an emission: it is atmospheric carbon returning to the "
-        f"atmosphere, a failure to remove rather than a new release. Note that bagged CO₂ can "
-        f"also carry across a week boundary, so a single week's liquefaction efficiency mixes "
-        f"yield with inventory timing."
-    )
 
 
 def _boundaries_table(row: pd.Series, styles: dict) -> Optional[Table]:
@@ -387,193 +343,59 @@ def _draw_letterhead(canvas_obj, doc, week_label: str) -> None:
     canvas_obj.restoreState()
 
 
-def _single_week_subsystem_chart(row: pd.Series) -> Optional[go.Figure]:
-    """Horizontal bar of THIS week's energy by subsystem, sorted descending —
-    directly answers 'what's using the most energy' for a single-week deep-dive,
-    which a multi-week stacked bar (the live dashboard's own chart) isn't built for."""
-    items = [
-        (name, row.get(col, 0) or 0, color)
-        for name, col, color in CN_ENERGY_SUBSYSTEMS
-        if name != "Plant Residual"  # instrument error, not something that consumes power
-    ]
-    items = [item for item in items if item[1] > 0]
-    if not items:
-        return None
-    items.sort(key=lambda x: x[1])
-
-    fig = go.Figure(go.Bar(
-        x=[v for _, v, _ in items],
-        y=[n for n, _, _ in items],
-        orientation="h",
-        marker_color=[c for _, _, c in items],
-        marker_line_color=CARD_BG,
-        marker_line_width=1,
-        text=[f"{v:,.0f} kWh" for _, v, _ in items],
-        textposition="outside",
-        textfont=dict(color="#F1F5F9", size=11),
-        hovertemplate="<b>%{y}</b><br>%{x:,.0f} kWh<extra></extra>",
-    ))
-    apply_chart_layout(
-        fig, title="Energy by Subsystem — This Week", height=max(220, 34 * len(items)),
-        xaxis_title="kWh", showlegend=False,
-    )
-    fig.update_layout(margin=dict(l=110, r=60))
-    return fig
-
-
-def _trend_chart(df: pd.DataFrame, current_start_date) -> Optional[go.Figure]:
-    """Removal-efficiency trend over recent weeks, with the reported week highlighted —
-    gives context for whether this week is typical, better, or worse than recent history."""
-    recent = df.tail(10).copy()
-    if len(recent) < 2:
-        return None
-    recent["removal_efficiency_pct"] = recent.apply(
-        lambda r: (r["net_removal_kg"] / r["collected_co2_kg"] * 100) if r["collected_co2_kg"] else 0,
-        axis=1,
-    )
-    colors_list = [
-        "#F97316" if d == current_start_date else "#3DB3B3" for d in recent["start_date"]
-    ]
-    fig = go.Figure(go.Bar(
-        x=recent["week_label"],
-        y=recent["removal_efficiency_pct"],
-        marker_color=colors_list,
-        marker_line_color=CARD_BG,
-        marker_line_width=1,
-        text=[f"{v:+.0f}%" for v in recent["removal_efficiency_pct"]],
-        textposition="outside",
-        textfont=dict(color="#F1F5F9", size=10),
-        hovertemplate="<b>%{x}</b><br>%{y:+.1f}%<extra></extra>",
-    ))
-    fig.add_hline(y=0, line_dash="dash", line_color="#94A3B8")
-    apply_chart_layout(
-        fig, title="Removal Efficiency — Recent Weeks (this week in orange)", height=260,
-        xaxis_title=None, yaxis_title="Net Removal ÷ Gross Captured (%)", showlegend=False,
-    )
-    return fig
-
-
-def _build_narrative(row: pd.Series) -> str:
-    """A compact, fixed-shape stat line for this week — deliberately not a
-    narrative. An earlier version compared each week against a trailing
-    baseline ("busier than usual", "well above its typical X kWh"), which was
-    more accurate but reads as a growing paragraph of storytelling rather
-    than a report a plant operator can scan every week — not scalable as a
-    once-a-week generated artifact. This states this week's own numbers only:
-    energy intensity, the operational/embodied split, the largest energy
-    consumer, and the largest process-loss stage — always the same shape.
-    """
-    intensity = row["energy_intensity_kwh_per_tonne"] or 0
-
-    op = row["total_operational_emissions_kg"] or 0
-    em = row["total_embodied_emissions_kg"] or 0
-    total = op + em
-    op_share = (op / total * 100) if total else 0
-
-    subsystems = [
-        (name, row.get(col, 0) or 0)
-        for name, col, _ in CN_ENERGY_SUBSYSTEMS
-        if name != "Plant Residual"
-    ]
-    subsystems = [s for s in subsystems if s[1] > 0]
-    consumer_stat = "—"
-    if subsystems:
-        subsystems.sort(key=lambda x: -x[1])
-        top_name, top_val = subsystems[0]
-        total_energy = sum(v for _, v in subsystems)
-        share = (top_val / total_energy * 100) if total_energy else 0
-        consumer_stat = f"<b>{top_name}</b> — {top_val:,.0f} kWh ({share:.0f}%)"
-
-    ads = row["total_ads_co2_kg"] or 0
-    loss1, loss2, loss3 = row["loss_stage_1_kg"] or 0, row["loss_stage_2_kg"] or 0, row["loss_stage_3_kg"] or 0
-    stage_losses = [("Adsorption→Desorption", loss1), ("Desorption→Collection", loss2), ("Collection→Liquefaction", loss3)]
-    stage_losses = [s for s in stage_losses if s[1] > 0]
-    loss_stat = "—"
-    if stage_losses and ads > 0:
-        stage_losses.sort(key=lambda x: -x[1])
-        top_stage, top_loss = stage_losses[0]
-        loss_stat = f"<b>{top_stage}</b> — {top_loss:,.1f} kg ({top_loss / ads * 100:.0f}%)"
-
-    stats = [
-        f"Energy intensity: <b>{intensity / 1000:.1f} MWh/t</b>",
-        f"Emissions mix: <b>{op_share:.0f}% operational</b> / {100 - op_share:.0f}% embodied",
-        f"Largest energy consumer: {consumer_stat}",
-        f"Largest process loss: {loss_stat}",
-    ]
-    return "&nbsp;&nbsp;·&nbsp;&nbsp;".join(stats)
-
-
-def generate_weekly_pdf_report(session, week_start: datetime, series_filter: Optional[str] = None) -> bytes:
+def generate_weekly_pdf_report(
+    session,
+    week_start: datetime,
+    series_filter: Optional[str] = None,
+    context: Optional[WeekReportContext] = None,
+) -> bytes:
     """Build the Carbon Nest weekly PDF report for the week starting at `week_start`.
 
-    Returns raw PDF bytes, ready for st.download_button.
+    Returns raw PDF bytes, ready for st.download_button. Pass `context` to reuse
+    an already-built WeekReportContext (the HTML fallback path builds one too);
+    omit it and this resolves its own.
     """
-    df = load_weekly_df_cached(session, series_filter)
-    if df.empty:
-        raise ValueError("No Carbon Nest weekly summaries available to report on.")
-    matches = df[df["start_date"] == week_start]
-    if matches.empty:
-        raise ValueError(f"No weekly summary found for week starting {week_start}.")
-    row = matches.iloc[0]
-    wc = weekly_working_capacity_cached(session, week_start)
-
-    grid_ef = get_grid_ef_cached(session)
-    s1n3 = get_weekly_metrics_by_series(session, week_start, "1n3")
-    s2n4 = get_weekly_metrics_by_series(session, week_start, "2n4")
+    ctx = context or build_week_report_context(session, week_start, series_filter)
+    df, row = ctx.df, ctx.row
+    wc = ctx.working_capacity
+    grid_ef = ctx.grid_ef
+    s1n3, s2n4 = ctx.series_1n3, ctx.series_2n4
 
     styles = _styles()
-    week_label = f"{row['start_date'].strftime('%b %d')} – {row['end_date'].strftime('%b %d, %Y')}"
+    week_label = ctx.week_label
 
-    gross_captured = row["collected_co2_kg"] or 0
-    total_emissions = row["total_emissions_kg"] or 0
-    net_removal = row["net_removal_kg"] or 0
-    removal_efficiency = (net_removal / gross_captured * 100) if gross_captured else 0
-    # Four process efficiencies, one per physical step of the chain. Each spans
-    # exactly one transition and is named after the step it measures:
-    #
-    #   Desorption    desorbed  / adsorbed   = Athena's per-cycle DES Efficiency
-    #   Collection    collected / desorbed   = Athena's per-cycle BAG Efficiency
-    #   Liquefaction  liquefied / collected
-    #   Capture       liquefied / adsorbed   = the overall chain, and exactly the
-    #                                          product of the three above
-    #
-    # Collection deliberately means collected ÷ DESORBED. It previously meant
-    # collected ÷ adsorbed, which silently spanned two stages and reused a name
-    # Athena had already assigned to something else — raised by the site team on
-    # 2026-08-27, where "collection efficiency" has always meant bag ÷ desorbed.
-    # Preserve the one-stage-per-name rule if these are ever edited: it is what
-    # makes Desorption × Collection × Liquefaction = Capture hold exactly.
-    ads_co2 = row["total_ads_co2_kg"] or 0
-    des_co2 = row["total_des_co2_kg"] or 0
-    bag_co2 = row["total_bag_co2_kg"] or 0
-    liq_co2 = row["liquefied_co2_kg"] or 0
-    desorption_efficiency = (des_co2 / ads_co2 * 100) if ads_co2 else None
-    collection_efficiency = (bag_co2 / des_co2 * 100) if des_co2 else None
-    # Keyed off collected, not liquefied, so a week that liquefied nothing
-    # reports 0.0% rather than "—" — a real and important result, not missing data.
-    liquefaction_efficiency = (liq_co2 / bag_co2 * 100) if bag_co2 else None
-    capture_efficiency = (liq_co2 / ads_co2 * 100) if ads_co2 else None
-    eff_color = GREEN if removal_efficiency > 0 else RED
+    gross_captured = ctx.gross_captured
+    total_emissions = ctx.total_emissions
+    net_removal = ctx.net_removal
+    removal_efficiency = ctx.removal_efficiency
+    eff_str = f"{removal_efficiency:+.1f}%" if removal_efficiency is not None else "—"
+    eff_color = RED if (removal_efficiency or 0) <= 0 else GREEN
 
     story = []
 
     # --- Hero ---
     story.append(Paragraph("CAPTURE &amp; REMOVAL EFFICIENCY", styles["eyebrow"]))
     story.append(Paragraph(
-        f'<font color="{eff_color}">{removal_efficiency:+.1f}%</font>', styles["hero"],
+        f'<font color="{eff_color}">{eff_str}</font>', styles["hero"],
     ))
     story.append(Paragraph(
         f"{gross_captured:,.1f} kg captured − {total_emissions:,.1f} kg emitted = "
-        f"{net_removal:+,.1f} kg net removal → {removal_efficiency:+.1f}% of what was captured.",
+        f"{net_removal:+,.1f} kg net removal → {eff_str} of what was captured.",
         styles["sub"],
     ))
+    if ctx.headline_note:
+        story.append(Spacer(1, 3 * mm))
+        story.append(Paragraph(
+            f"<b>Reported on the capture boundary.</b> {ctx.headline_note}",
+            styles["sub"],
+        ))
     story.append(Spacer(1, 8 * mm))
 
     # --- KPI card row ---
     cards = [
-        _kpi_card("Gross Captured", f"{gross_captured:,.1f} kg", _boundary_note(row), "#0EA5E9", styles),
-        _kpi_card("Operational Emissions", f"{row['total_operational_emissions_kg']:,.1f} kg", f"Grid EF: {grid_ef:.4f} kg/kWh", "#F59E0B", styles),
-        _kpi_card("Embodied Emissions", f"{row['total_embodied_emissions_kg']:,.1f} kg", "Output-based, v0.6 LCA", "#A855F7", styles),
+        _kpi_card("Gross Captured", f"{gross_captured:,.1f} kg", boundary_note(row, ctx.headline_basis), "#0EA5E9", styles),
+        _kpi_card("Operational Emissions", f"{ctx.headline_operational:,.1f} kg", f"Grid EF: {grid_ef:.4f} kg/kWh", "#F59E0B", styles),
+        _kpi_card("Embodied Emissions", f"{ctx.headline_embodied:,.1f} kg", "Output-based, v0.6 LCA", "#A855F7", styles),
         _kpi_card("Net Removal", f"{net_removal:+,.1f} kg", "Captured minus total emissions", GREEN if net_removal > 0 else RED, styles),
     ]
     card_row = Table([cards], colWidths=[40 * mm] * 4)
@@ -584,10 +406,10 @@ def generate_weekly_pdf_report(session, week_start: datetime, series_filter: Opt
     # The chain in order, left to right, so the reader walks adsorbed → desorbed
     # → bagged → liquefied and lands on the overall figure last.
     cards2 = [
-        _kpi_card("Desorption Efficiency", _pct(desorption_efficiency), "Desorbed ÷ Adsorbed", "#A855F7", styles),
-        _kpi_card("Collection Efficiency", _pct(collection_efficiency), "Collected ÷ Desorbed", "#3DB3B3", styles),
-        _kpi_card("Liquefaction Efficiency", _pct(liquefaction_efficiency), "Liquefied ÷ Collected", "#0EA5E9", styles),
-        _kpi_card("Capture Efficiency", _pct(capture_efficiency), "Liquefied ÷ Adsorbed · overall", BRAND_TEAL, styles),
+        _kpi_card("Desorption Efficiency", pct(ctx.desorption_efficiency), "Desorbed ÷ Adsorbed", "#A855F7", styles),
+        _kpi_card("Collection Efficiency", pct(ctx.collection_efficiency), "Collected ÷ Desorbed", "#3DB3B3", styles),
+        _kpi_card("Liquefaction Efficiency", pct(ctx.liquefaction_efficiency), "Liquefied ÷ Collected", "#0EA5E9", styles),
+        _kpi_card("Capture Efficiency", pct(ctx.capture_efficiency), "Liquefied ÷ Adsorbed · overall", BRAND_TEAL, styles),
     ]
     card_row2 = Table([cards2], colWidths=[40 * mm] * 4)
     card_row2.setStyle(TableStyle([("LEFTPADDING", (0, 0), (-1, -1), 3), ("RIGHTPADDING", (0, 0), (-1, -1), 3), ("VALIGN", (0, 0), (-1, -1), "TOP")]))
@@ -610,14 +432,14 @@ def generate_weekly_pdf_report(session, week_start: datetime, series_filter: Opt
         story.append(Paragraph("Removal Efficiency — With and Without Liquefaction", styles["h2"]))
         story.append(boundaries)
         story.append(Spacer(1, 2 * mm))
-        story.append(Paragraph(_boundaries_note(row), styles["sub"]))
+        story.append(Paragraph(boundaries_note(row), styles["sub"]))
         story.append(Spacer(1, 6 * mm))
     else:
         story.append(Spacer(1, 2 * mm))
 
     # --- Narrative ---
     story.append(Paragraph("What's Driving This Week's Result", styles["h2"]))
-    story.append(Paragraph(_build_narrative(row), styles["body"]))
+    story.append(Paragraph(build_narrative(row), styles["body"]))
     story.append(Spacer(1, 6 * mm))
 
     # --- Sorbent working capacity ---
@@ -639,11 +461,7 @@ def generate_weekly_pdf_report(session, week_start: datetime, series_filter: Opt
     wc_row = Table([wc_cards], colWidths=[80 * mm] * 2)
     wc_row.setStyle(TableStyle([("LEFTPADDING", (0, 0), (-1, -1), 3), ("RIGHTPADDING", (0, 0), (-1, -1), 3)]))
     wc_block.append(wc_row)
-    anomaly_cycles = sorted({
-        a["cycle_number"]
-        for g in ("A", "B")
-        for a in wc["groups"][g]["config_anomalies"]
-    })
+    anomaly_cycles = ctx.anomaly_cycles
     if anomaly_cycles:
         cycle_word = "cycle" if len(anomaly_cycles) == 1 else "cycles"
         verb = "has" if len(anomaly_cycles) == 1 else "have"
@@ -691,7 +509,7 @@ def generate_weekly_pdf_report(session, week_start: datetime, series_filter: Opt
     # so a page break can never strand a heading alone at the bottom of a page with
     # its content pushed to the next one.
     balance_block = [Paragraph("Carbon Balance", styles["h2"])]
-    wf = waterfall_chart(gross_captured, row["total_operational_emissions_kg"], row["total_embodied_emissions_kg"])
+    wf = waterfall_chart(gross_captured, ctx.headline_operational, ctx.headline_embodied)
     if wf:
         png = _fig_png(wf, width=1000, height=420)
         balance_block.append(RLImage(io.BytesIO(png), width=170 * mm, height=170 * mm * 420 / 1000))
@@ -704,7 +522,7 @@ def generate_weekly_pdf_report(session, week_start: datetime, series_filter: Opt
 
     # --- Energy by subsystem (this week) + emissions split ---
     subsystem_block = [Paragraph("Energy &amp; Emissions Breakdown", styles["h2"])]
-    subsystem_fig = _single_week_subsystem_chart(row)
+    subsystem_fig = single_week_subsystem_chart(row)
     if subsystem_fig:
         png = _fig_png(subsystem_fig, width=1000, height=max(220, 34 * 8))
         h = 170 * mm * subsystem_fig.layout.height / 1000
@@ -729,7 +547,7 @@ def generate_weekly_pdf_report(session, week_start: datetime, series_filter: Opt
     story.append(Spacer(1, 6 * mm))
 
     # --- Trend context ---
-    trend_fig = _trend_chart(df, row["start_date"])
+    trend_fig = recent_weeks_trend_chart(df, row["start_date"])
     if trend_fig is not None:
         trend_block = [Paragraph("Recent-Week Context", styles["h2"])]
         png = _fig_png(trend_fig, width=1000, height=260)

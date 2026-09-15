@@ -55,6 +55,31 @@ def module_prefix_of(raw_module: str) -> str:
     return raw_module.split("-")[0]
 
 
+def known_module_prefixes(session) -> list:
+    """Every module prefix this deployment has seen, configured or not.
+
+    The union of prefixes observed in imported cycle data and prefixes that
+    already have a config row. Hardcoding the list (it was ("N1", "N2",
+    "N1N2")) meant a newly commissioned Nelion could not be configured through
+    the admin UI at all: its cycles imported fine, but the prefix was absent
+    from the form's options, so the row that `bed_volume_m3()` needs could
+    never be created. Deriving it from the data instead means N3 — and any
+    later N4 — shows up the moment its first cycle lands.
+    """
+    from_cycles = {
+        module_prefix_of(raw or "")
+        for (raw,) in session.query(CarbonNestCycleData.raw_module).distinct()
+        if raw
+    }
+    from_config = {
+        prefix
+        for (prefix,) in session.query(CarbonNestSorbentConfig.module_prefix).distinct()
+        if prefix
+    }
+    # Shortest first, so single Nelions precede the combined readings.
+    return sorted(from_cycles | from_config, key=lambda p: (len(p), p))
+
+
 def _config_as_of(session, module_prefix: str, as_of: datetime) -> Optional[CarbonNestSorbentConfig]:
     """The config row in force at `as_of`: the latest one whose effective_date
     doesn't exceed it. Keeps historical weeks stable when a later reload adds a
@@ -134,14 +159,29 @@ def weekly_working_capacity(session, reference: datetime) -> dict:
         in_window = [c for c in cycles if group_of(c.series) == g]
         valid = [c for c in in_window if is_valid_for_capacity(c)]
         excluded_ids = [c.cycle_number for c in in_window if c not in valid]
-        caps = [v for v in (des_vol_cap(session, c) for c in valid) if v is not None]
+        # Capacity is kept next to its cycle so a cycle whose module has no
+        # sorbent-config row can be *reported* rather than silently dropped.
+        # It yields None (no bed volume, no denominator) and cannot be
+        # averaged — but it used to vanish without trace: n_cycles_used still
+        # counted it and excluded_cycle_ids never mentioned it, so a newly
+        # commissioned Nelion moved the group average with every displayed
+        # count still reading healthy. n_cycles_used now means "actually
+        # contributed", which is what all four call sites already claim it is.
+        caps_by_cycle = [(c, des_vol_cap(session, c)) for c in valid]
+        caps = [v for _, v in caps_by_cycle if v is not None]
+        unconfigured = [c for c, v in caps_by_cycle if v is None]
         anomalies = [a for c in in_window if (a := detect_config_anomaly(session, c))]
         groups[g] = {
             "label": GROUP_LABELS[g],
             "avg_working_capacity_mol_per_m3": mean(caps) if caps else None,
             "n_cycles_in_window": len(in_window),
-            "n_cycles_used": len(valid),
+            "n_cycles_used": len(caps),
+            "n_cycles_valid": len(valid),
             "excluded_cycle_ids": excluded_ids,
+            "missing_config_cycle_ids": [c.cycle_number for c in unconfigured],
+            "missing_config_prefixes": sorted(
+                {module_prefix_of(c.raw_module) for c in unconfigured}
+            ),
             "config_anomalies": anomalies,
         }
 

@@ -134,6 +134,50 @@ streamlit run app/main.py --server.port 8502
 
 ---
 
+## 📄 Weekly report export — PDF vs HTML/CSV
+
+The weekly report is laid out with ReportLab, which is pure pip. The one
+host-dependent piece is Chrome: the PDF embeds its Plotly charts as rasterized
+PNGs and `kaleido` needs a real Chrome/Chromium binary to produce them.
+
+`app/services/pdf_support.py` probes for that binary at runtime — no download,
+no launch — and the reports page offers the PDF only when one is present.
+Otherwise it offers the same report as **self-contained HTML** (same figures,
+same sentences, interactive charts, prints to PDF from the browser) plus a
+headline-numbers **CSV**. Both formats read one `WeekReportContext`
+(`app/services/report_data.py`), so they cannot disagree.
+
+Override the probe with `PDF_EXPORT_ENABLED=on|off` when it guesses wrong.
+
+### Why `packages.txt` is parked as `packages.txt.disabled`
+
+As of **2026-09-08**, Streamlit Community Cloud fails during dependency
+processing for *any* app that has a `packages.txt`:
+
+```
+E: Release file for http://deb.debian.org/debian-security/dists/bullseye-security/InRelease is expired
+```
+
+The base image is Debian trixie but still carries a stale `bullseye-security`
+apt source, so `apt-get update` fails *before* it ever reads which packages we
+asked for. That's Streamlit's image to fix and isn't reachable from this repo —
+and because the failure is at the update step, trimming lines doesn't help. The
+whole file has to be absent, hence the rename.
+
+**To restore chromium (and the PDF) on cloud once Streamlit fixes the image:**
+
+```bash
+git mv packages.txt.disabled packages.txt
+```
+
+That's the entire change. Detection then finds the browser on its own and the
+reports page goes back to offering the PDF; no code edit, no flag to flip.
+Restoring the file also brings back `fonts-liberation` / `fonts-dejavu-core`,
+which `_register_unicode_font()` needs for `→`, `−` and `₂` — without a real
+TTF those glyphs are invisible in the PDF (see `app/services/pdf_report.py`).
+
+---
+
 ## 🔐 Default Admin Login
 
 - Username: `admin`
