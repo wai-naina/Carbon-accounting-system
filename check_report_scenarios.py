@@ -3,6 +3,7 @@ and assert the page agrees with itself.
 
     python check_report_scenarios.py          # all scenarios, exits 1 on failure
     python check_report_scenarios.py -v       # also print each scenario's figures
+    python check_report_scenarios.py --pdf    # also drive the PDF renderer (slow)
 
 Why this exists. The 2026-09-05 report stated four things about one week that
 could not all be true: the hero and the boundary table reported the capture
@@ -23,6 +24,9 @@ Scenarios are built by mutating a real row out of the local database, so column
 coverage stays realistic rather than reflecting whatever a hand-written fixture
 happened to include. The session-backed helpers are stubbed; everything from
 build_week_report_context() down is the genuine code path.
+
+--pdf additionally needs pypdf and a headless Chrome for kaleido; both are
+imported lazily, so the default run needs neither.
 
 Needs a local database with at least one weekly summary. Runs against SQLite by
 default, or Neon if DATABASE_URL is set -- it only reads.
@@ -259,8 +263,28 @@ def render(week_start, row_dict, series_filter, populated_wc: bool):
     return ctx, doc
 
 
+def render_pdf_text(week_start, ctx, series_filter) -> str:
+    """The same scenario through the PDF renderer, returned as extracted text.
+
+    Worth the cost because the PDF is the format that actually gets sent, and
+    it has its own copy of the KPI-card code — the two renderers agreeing is
+    not something the HTML path can demonstrate on its own. Slow: every chart
+    is rasterized through a real headless Chrome.
+    """
+    from pypdf import PdfReader
+    from app.services import pdf_report
+
+    data = pdf_report.generate_weekly_pdf_report(None, week_start, series_filter, context=ctx)
+    raw = data if isinstance(data, bytes) else data.getvalue()
+    import io
+
+    pages = PdfReader(io.BytesIO(raw)).pages
+    return re.sub(r"[ \t]+", " ", "\n".join(p.extract_text() or "" for p in pages))
+
+
 def main() -> int:
     verbose = "-v" in sys.argv
+    with_pdf = "--pdf" in sys.argv
 
     session = get_session()
     try:
@@ -301,6 +325,29 @@ def main() -> int:
         text = visible_text(doc)
         problems = [msg for pattern, msg in RED_FLAGS if re.search(pattern, text, re.I)]
         problems += cross_check(ctx, text)
+
+        if with_pdf:
+            try:
+                pdf_text = render_pdf_text(week_start, ctx, series_filter)
+            except Exception:
+                problems.append(
+                    "PDF render failed: " + traceback.format_exc().strip().splitlines()[-1]
+                )
+            else:
+                problems += [
+                    f"PDF: {msg}" for pattern, msg in RED_FLAGS
+                    if re.search(pattern, pdf_text, re.I)
+                ]
+                # The two renderers must state the same intensity. They keep
+                # separate copies of the card code, so this is the only check
+                # that can catch one drifting from the other.
+                h = re.search(r"ENERGY INTENSITY\s*([\d.,]+|—)\s*MWh/t", text)
+                p = re.search(r"ENERGY INTENSITY\s*([\d.,]+|—)\s*MWh/t", pdf_text)
+                if h and p and h.group(1) != p.group(1):
+                    problems.append(
+                        f"HTML card {h.group(1)} MWh/t vs PDF card {p.group(1)}"
+                    )
+
         if problems:
             failures += 1
 
