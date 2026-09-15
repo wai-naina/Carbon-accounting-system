@@ -40,6 +40,7 @@ from reportlab.platypus import (
 from app.components.branding import get_logo_path
 from app.components.charts import emissions_breakdown_pie, waterfall_chart
 from app.services.report_data import (
+    BASIS_LABEL,
     WeekReportContext,
     boundaries_note,
     boundary_note,
@@ -416,9 +417,18 @@ def generate_weekly_pdf_report(
     story.append(card_row2)
     story.append(Spacer(1, 3 * mm))
 
+    # Intensity comes off the resolved headline, not the row: on a week the
+    # headline fell back to the capture boundary, the row still holds the
+    # liquefied basis and this card printed an em dash beside a boundary table
+    # reporting 41.7 MWh/t for the same week.
+    intensity = ctx.headline_energy_intensity
     cards3 = [
         _kpi_card("Cycles This Week", f"{int(row['total_cycles'] or 0)}", f"1n3: {s1n3['cycles']} · 2n4: {s2n4['cycles']}", BRAND_TEAL, styles),
-        _kpi_card("Energy Intensity", f"{row['energy_intensity_kwh_per_tonne'] / 1000:.1f} MWh/t" if row["energy_intensity_kwh_per_tonne"] else "—", "Process energy per tonne captured", "#94A3B8", styles),
+        _kpi_card(
+            "Energy Intensity",
+            f"{intensity / 1000:.1f} MWh/t" if intensity is not None else "—",
+            f"Metered energy per tonne · {BASIS_LABEL[ctx.headline_basis]}", "#94A3B8", styles,
+        ),
     ]
     card_row3 = Table([cards3], colWidths=[40 * mm] * 2, hAlign="LEFT")
     # VALIGN TOP so the two cards' accent rules line up even when one card's
@@ -439,7 +449,7 @@ def generate_weekly_pdf_report(
 
     # --- Narrative ---
     story.append(Paragraph("What's Driving This Week's Result", styles["h2"]))
-    story.append(Paragraph(build_narrative(row), styles["body"]))
+    story.append(Paragraph(build_narrative(row, ctx.headline_dict()), styles["body"]))
     story.append(Spacer(1, 6 * mm))
 
     # --- Sorbent working capacity ---
@@ -476,7 +486,7 @@ def generate_weekly_pdf_report(
     # --- Desorption steam ---
     steam_kg = row.get("total_steam_kg", 0) or 0
     if steam_kg > 0:
-        steam_intensity = row.get("steam_intensity_kg_per_tonne", 0) or 0
+        steam_intensity = ctx.headline_steam_intensity
         steam_block = [
             Paragraph("Desorption Steam", styles["h2"]),
             Paragraph(
@@ -494,8 +504,8 @@ def generate_weekly_pdf_report(
             ),
             _kpi_card(
                 "Steam Intensity",
-                f"{steam_intensity:,.0f} kg/t" if steam_intensity else "—",
-                "kg steam per tonne CO&#8322; captured", "#F59E0B", styles,
+                f"{steam_intensity:,.0f} kg/t" if steam_intensity is not None else "—",
+                f"kg steam per tonne · {BASIS_LABEL[ctx.headline_basis]}", "#F59E0B", styles,
             ),
         ]
         steam_row = Table([steam_cards], colWidths=[80 * mm] * 2)

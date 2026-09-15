@@ -28,6 +28,7 @@ import plotly.graph_objects as go
 from app.components.branding import get_logo_path
 from app.components.charts import emissions_breakdown_pie, waterfall_chart
 from app.services.report_data import (
+    BASIS_LABEL,
     CHART_CARD_BG,
     WeekReportContext,
     boundaries_note,
@@ -218,12 +219,17 @@ def generate_weekly_html_report(
         _kpi_card("Liquefaction Efficiency", pct(ctx.liquefaction_efficiency), "Liquefied ÷ Collected", "#0EA5E9"),
         _kpi_card("Capture Efficiency", pct(ctx.capture_efficiency), "Liquefied ÷ Adsorbed · overall", BRAND_DARK),
     ])
-    intensity = row["energy_intensity_kwh_per_tonne"]
+    # Intensity comes off the resolved headline, not the row: on a week the
+    # headline fell back to the capture boundary, the row still holds the
+    # liquefied basis and this card printed an em dash beside a boundary table
+    # reporting 41.7 MWh/t for the same week.
+    intensity = ctx.headline_energy_intensity
     cards3 = "".join([
         _kpi_card("Cycles This Week", f"{int(row['total_cycles'] or 0)}",
                   f"1n3: {ctx.series_1n3['cycles']} · 2n4: {ctx.series_2n4['cycles']}", BRAND_DARK),
-        _kpi_card("Energy Intensity", f"{intensity / 1000:.1f} MWh/t" if intensity else "—",
-                  "Process energy per tonne captured", "#94A3B8"),
+        _kpi_card("Energy Intensity",
+                  f"{intensity / 1000:.1f} MWh/t" if intensity is not None else "—",
+                  f"Metered energy per tonne · {BASIS_LABEL[ctx.headline_basis]}", "#94A3B8"),
     ])
 
     sections: list[str] = []
@@ -237,7 +243,7 @@ def generate_weekly_html_report(
 
     sections.append(
         "<h2>What's Driving This Week's Result</h2>"
-        f"<p class='body'>{build_narrative(row)}</p>"
+        f"<p class='body'>{build_narrative(row, ctx.headline_dict())}</p>"
     )
 
     # --- Sorbent working capacity ---
@@ -271,13 +277,14 @@ def generate_weekly_html_report(
     # --- Desorption steam ---
     steam_kg = row.get("total_steam_kg", 0) or 0
     if steam_kg > 0:
-        steam_intensity = row.get("steam_intensity_kg_per_tonne", 0) or 0
+        steam_intensity = ctx.headline_steam_intensity
         steam_cards = "".join([
             _kpi_card("Steam Used", f"{steam_kg:,.0f} kg",
                       f"1n3: {ctx.series_1n3['steam_kg']:,.0f} kg · "
                       f"2n4: {ctx.series_2n4['steam_kg']:,.0f} kg", "#0EA5E9"),
-            _kpi_card("Steam Intensity", f"{steam_intensity:,.0f} kg/t" if steam_intensity else "—",
-                      "kg steam per tonne CO&#8322; captured", "#F59E0B"),
+            _kpi_card("Steam Intensity",
+                      f"{steam_intensity:,.0f} kg/t" if steam_intensity is not None else "—",
+                      f"kg steam per tonne · {BASIS_LABEL[ctx.headline_basis]}", "#F59E0B"),
         ])
         sections.append(
             "<h2>Desorption Steam</h2>"

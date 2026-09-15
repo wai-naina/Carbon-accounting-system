@@ -32,6 +32,31 @@ def pct(value: Optional[float]) -> str:
     return f"{value:.1f}%" if value is not None else "—"
 
 
+# How to name each headline basis in a card subtitle. Every intensity figure
+# is per tonne of PRODUCT, and which product that is changes with the boundary
+# in force — so the card has to say which, or two weeks' cards silently mean
+# different things.
+BASIS_LABEL = {
+    "liquefied": "liquefied CO₂",
+    "collected": "collected CO₂ (capture boundary)",
+}
+
+
+def per_tonne(amount: Optional[float], product_kg: Optional[float]) -> Optional[float]:
+    """`amount` per tonne of product, or None when the ratio is undefined.
+
+    None rather than 0, for the same reason pct() returns an em dash: a week
+    with no product has no intensity, and "0.0 MWh/t" reads as perfect
+    efficiency — the most flattering possible misstatement of a week that
+    produced nothing.
+    """
+    amount = amount or 0
+    product_kg = product_kg or 0
+    if amount <= 0 or product_kg <= 0:
+        return None
+    return amount / (product_kg / 1000)
+
+
 def boundary_note(row: pd.Series, headline_basis: Optional[str] = None) -> str:
     """Subtitle for the Gross Captured card, naming the boundary in force.
 
@@ -65,14 +90,31 @@ def headline_figures(row: pd.Series) -> dict:
     reports it, and only the headline's *choice* of boundary moves here.
 
     Single definition on purpose — the hero sentence, the KPI cards, the
-    carbon-balance waterfall and the recent-weeks trend all read this, so they
-    cannot end up quoting different bases for the same week.
+    narrative stat line, the carbon-balance waterfall and the recent-weeks
+    trend all read this, so they cannot end up quoting different bases for the
+    same week.
+
+    EVERY boundary-dependent quantity belongs in here, including the
+    intensities. They were previously read straight off `row`, whose columns
+    always hold the boundary the week was LOADED on, not the one the headline
+    settled on. On a zero-liquefaction week that produced a report which
+    contradicted itself in three places at once: the hero and the boundary
+    table said capture boundary at 41.7 MWh/t, while the Energy Intensity and
+    Steam Intensity cards rendered "—" and the narrative claimed "0.0 MWh/t"
+    and a "100% operational / 0% embodied" mix — all four computed against
+    liquefied product, which was zero. Any new boundary-dependent figure must
+    be added here rather than read from `row` at the render site.
     """
     liquefied = row.get("liquefied_co2_kg") or 0
     collected = row.get("total_bag_co2_kg") or 0
+    steam = row.get("total_steam_kg") or 0
 
     if row.get("boundary") != "capture" and liquefied <= 0 and collected > 0:
         gross = collected
+        # Boundary A energy: the site meter with liquefaction backed out of it,
+        # exactly as the boundary table's row A reports it, so the card and the
+        # table can never print different MWh/t for the same week.
+        energy = row.get("capture_energy_kwh") or 0
         return {
             "basis": "collected",
             "note": HEADLINE_FALLBACK_NOTE,
@@ -81,12 +123,16 @@ def headline_figures(row: pd.Series) -> dict:
             "net_removal": row.get("capture_net_removal_kg") or 0,
             "operational": row.get("capture_operational_emissions_kg") or 0,
             "embodied": row.get("capture_embodied_emissions_kg") or 0,
+            "energy_kwh": energy,
+            "energy_intensity_kwh_per_tonne": per_tonne(energy, gross),
+            "steam_intensity_kg_per_tonne": per_tonne(steam, gross),
             "removal_efficiency": (
                 (row.get("capture_net_removal_kg") or 0) / gross * 100 if gross > 0 else None
             ),
         }
 
     gross = row.get("collected_co2_kg") or 0
+    energy = row.get("total_energy_kwh") or 0
     return {
         "basis": "liquefied",
         "note": None,
@@ -95,6 +141,9 @@ def headline_figures(row: pd.Series) -> dict:
         "net_removal": row.get("net_removal_kg") or 0,
         "operational": row.get("total_operational_emissions_kg") or 0,
         "embodied": row.get("total_embodied_emissions_kg") or 0,
+        "energy_kwh": energy,
+        "energy_intensity_kwh_per_tonne": per_tonne(energy, gross),
+        "steam_intensity_kg_per_tonne": per_tonne(steam, gross),
         # None, not 0: a week with no product has no removal efficiency, and
         # "+0.0%" reads as break-even — the single most misleading thing this
         # report could print about a week that captured nothing. Matches
@@ -129,6 +178,8 @@ def boundaries_note(row: pd.Series) -> str:
     liq = row.get("liquefied_gross_kg") or 0
     cap_em = row.get("capture_total_emissions_kg") or 0
     liq_em = row.get("liquefied_total_emissions_kg") or 0
+    cap_net = row.get("capture_net_removal_kg") or 0
+    liq_net = row.get("liquefied_net_removal_kg") or 0
 
     if liq > bag and bag > 0:
         return (
@@ -141,10 +192,15 @@ def boundaries_note(row: pd.Series) -> str:
             f"boundary A's ({cap_em:,.1f} kg) — the reverse of a normal week."
         )
 
+    # Both comparisons are measured, not assumed. "worse" was previously fixed
+    # text sitting beside a computed `direction`, which is the same trap this
+    # function's docstring describes: it holds while liquefaction yield is
+    # below 100%, and prints a falsehood on the week it is not.
     direction = "lower" if liq_em < cap_em else "higher"
+    outcome = "worse" if liq_net < cap_net else "better"
     return (
-        f"The liquefied boundary carries <i>{direction}</i> total emissions but a "
-        f"<i>worse</i> net removal — embodied emissions are charged per tonne of product, so "
+        f"The liquefied boundary carries <i>{direction}</i> total emissions and a "
+        f"<i>{outcome}</i> net removal — embodied emissions are charged per tonne of product, so "
         f"they shrink with the denominator. CO₂ vented during liquefaction reduces product "
         f"without being charged as an emission: it is atmospheric carbon returning to the "
         f"atmosphere, a failure to remove rather than a new release. Note that bagged CO₂ can "
@@ -153,7 +209,7 @@ def boundaries_note(row: pd.Series) -> str:
     )
 
 
-def build_narrative(row: pd.Series) -> str:
+def build_narrative(row: pd.Series, headline: Optional[dict] = None) -> str:
     """A compact, fixed-shape stat line for this week — deliberately not a
     narrative. An earlier version compared each week against a trailing
     baseline ("busier than usual", "well above its typical X kWh"), which was
@@ -163,12 +219,16 @@ def build_narrative(row: pd.Series) -> str:
     energy intensity, the operational/embodied split, the largest energy
     consumer, and the largest process-loss stage — always the same shape.
     """
-    intensity = row["energy_intensity_kwh_per_tonne"] or 0
+    # Read the boundary in force, never the row's own columns — see
+    # headline_figures(). Defaulting here keeps the function callable on its
+    # own, but every renderer passes the resolved headline.
+    headline = headline or headline_figures(row)
+    intensity = headline["energy_intensity_kwh_per_tonne"]
 
-    op = row["total_operational_emissions_kg"] or 0
-    em = row["total_embodied_emissions_kg"] or 0
+    op = headline["operational"] or 0
+    em = headline["embodied"] or 0
     total = op + em
-    op_share = (op / total * 100) if total else 0
+    op_share = (op / total * 100) if total else None
 
     subsystems = [
         (name, row.get(col, 0) or 0)
@@ -194,9 +254,18 @@ def build_narrative(row: pd.Series) -> str:
         top_stage, top_loss = stage_losses[0]
         loss_stat = f"<b>{top_stage}</b> — {top_loss:,.1f} kg ({top_loss / ads * 100:.0f}%)"
 
+    # An undefined ratio prints an em dash rather than a number. A week with no
+    # product has no intensity and no meaningful emissions mix; printing "0.0
+    # MWh/t · 100% operational / 0% embodied" stated both as facts.
+    intensity_stat = f"<b>{intensity / 1000:.1f} MWh/t</b>" if intensity is not None else "—"
+    mix_stat = (
+        f"<b>{op_share:.0f}% operational</b> / {100 - op_share:.0f}% embodied"
+        if op_share is not None else "—"
+    )
+
     stats = [
-        f"Energy intensity: <b>{intensity / 1000:.1f} MWh/t</b>",
-        f"Emissions mix: <b>{op_share:.0f}% operational</b> / {100 - op_share:.0f}% embodied",
+        f"Energy intensity: {intensity_stat}",
+        f"Emissions mix: {mix_stat}",
         f"Largest energy consumer: {consumer_stat}",
         f"Largest process loss: {loss_stat}",
     ]
@@ -304,6 +373,11 @@ class WeekReportContext:
     # sentence on a week the headline fell back to the capture boundary.
     headline_operational: float
     headline_embodied: float
+    # Intensities on the boundary in force, for the same reason. None when the
+    # ratio is undefined — renderers must print an em dash, not zero.
+    headline_energy_kwh: float
+    headline_energy_intensity: Optional[float]
+    headline_steam_intensity: Optional[float]
     # "liquefied" (credit-bearing, the norm) or "collected" (this week
     # liquefied nothing). `headline_note` is the disclosure to render, or None.
     headline_basis: str
@@ -318,6 +392,19 @@ class WeekReportContext:
     collection_efficiency: Optional[float]
     liquefaction_efficiency: Optional[float]
     capture_efficiency: Optional[float]
+
+    def headline_dict(self) -> dict:
+        """The resolved headline figures reassembled, for helpers that take the
+        whole dict rather than individual fields. Keys match headline_figures()
+        so either can be passed interchangeably."""
+        return {
+            "basis": self.headline_basis,
+            "operational": self.headline_operational,
+            "embodied": self.headline_embodied,
+            "energy_kwh": self.headline_energy_kwh,
+            "energy_intensity_kwh_per_tonne": self.headline_energy_intensity,
+            "steam_intensity_kg_per_tonne": self.headline_steam_intensity,
+        }
 
     @property
     def anomaly_cycles(self) -> list[int]:
@@ -395,6 +482,9 @@ def build_week_report_context(
         removal_efficiency=headline["removal_efficiency"],
         headline_operational=headline["operational"],
         headline_embodied=headline["embodied"],
+        headline_energy_kwh=headline["energy_kwh"],
+        headline_energy_intensity=headline["energy_intensity_kwh_per_tonne"],
+        headline_steam_intensity=headline["steam_intensity_kg_per_tonne"],
         headline_basis=headline["basis"],
         headline_note=headline["note"],
         ads_co2=ads_co2,
