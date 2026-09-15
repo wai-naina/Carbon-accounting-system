@@ -15,7 +15,7 @@ renderer unchanged.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 import pandas as pd
@@ -40,6 +40,42 @@ BASIS_LABEL = {
     "liquefied": "liquefied CO₂",
     "collected": "collected CO₂ (capture boundary)",
 }
+
+
+# The plant's own timezone. Every other timestamp in this report is plant-local
+# and naive — Athena exports local times, and the Saturday-18:00 week boundary
+# is 18:00 in Gilgil — so the footer must be too.
+PLANT_TZ = "Africa/Nairobi"
+PLANT_TZ_LABEL = "EAT"
+PLANT_UTC_OFFSET_HOURS = 3
+
+
+def report_generated_at(now: Optional[datetime] = None) -> str:
+    """When this report was generated, in plant-local time, labelled.
+
+    Previously a bare datetime.now() with no timezone. On a UTC host — which
+    is what Streamlit Cloud runs — that rendered a Nairobi afternoon as three
+    hours earlier with nothing to say so, and a report generated at 20:14 EAT
+    was footed "Generated 2026-09-15 17:14". Every other time in the document
+    is plant-local, so the one timestamp a reader might check a report against
+    was the one that disagreed with all of them.
+
+    The label matters as much as the conversion: this report goes to verifiers,
+    and an unlabelled timestamp is not evidence of anything.
+    """
+    now = now or datetime.now(timezone.utc)
+    if now.tzinfo is None:
+        now = now.astimezone()
+    try:
+        from zoneinfo import ZoneInfo
+
+        local = now.astimezone(ZoneInfo(PLANT_TZ))
+    except Exception:
+        # No tz database on this host (bare Windows without `tzdata`). EAT has
+        # no DST and has been UTC+3 since 1960, so a fixed offset is exact
+        # rather than an approximation.
+        local = now.astimezone(timezone(timedelta(hours=PLANT_UTC_OFFSET_HOURS)))
+    return f"{local:%Y-%m-%d %H:%M} {PLANT_TZ_LABEL}"
 
 
 def per_tonne(amount: Optional[float], product_kg: Optional[float]) -> Optional[float]:

@@ -48,6 +48,7 @@ from app.services.report_data import (
     build_week_report_context,
     pct,
     recent_weeks_trend_chart,
+    report_generated_at,
     single_week_subsystem_chart,
 )
 
@@ -339,7 +340,7 @@ def _draw_letterhead(canvas_obj, doc, week_label: str) -> None:
     canvas_obj.drawString(MARGIN, 8 * mm, "Octavia Carbon · Carbon Nest — Direct Air Capture, Gilgil, Kenya")
     canvas_obj.drawRightString(
         PAGE_W - MARGIN, 8 * mm,
-        f"Page {doc.page} · Generated {datetime.now().strftime('%Y-%m-%d %H:%M')}",
+        f"Page {doc.page} · Generated {report_generated_at()}",
     )
     canvas_obj.restoreState()
 

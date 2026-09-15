@@ -37,6 +37,7 @@ from app.services.report_data import (
     build_week_report_context,
     pct,
     recent_weeks_trend_chart,
+    report_generated_at,
     single_week_subsystem_chart,
 )
 
@@ -343,7 +344,7 @@ def generate_weekly_html_report(
         if ctx.headline_note else ""
     )
 
-    generated = datetime.now().strftime("%Y-%m-%d %H:%M")
+    generated = report_generated_at()
     return f"""<!doctype html>
 <html lang="en">
 <head>
