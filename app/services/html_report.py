@@ -26,7 +26,7 @@ from typing import Optional
 import plotly.graph_objects as go
 
 from app.components.branding import get_logo_path
-from app.components.charts import emissions_breakdown_pie, waterfall_chart
+from app.components.charts import cn_emissions_breakdown_pie, waterfall_chart
 from app.services.report_data import (
     BASIS_LABEL,
     CHART_CARD_BG,
@@ -313,7 +313,7 @@ def generate_weekly_html_report(
         "out of proportion to the others is worth a second look.",
     )
     pie = embed(
-        emissions_breakdown_pie(pd.DataFrame([row])),
+        cn_emissions_breakdown_pie(row, ctx.headline_dict(), ctx.grid_ef),
         "A large Embodied slice usually means captured tonnage is still low relative to the "
         "plant's fixed footprint — not that operations got worse.",
     )

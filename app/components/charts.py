@@ -685,6 +685,84 @@ CN_ENERGY_SUBSYSTEMS = [
 ]
 
 
+def cn_emissions_breakdown_pie(row, headline: dict, grid_ef: float) -> go.Figure:
+    """Where a Carbon Nest week's emissions came from, on the boundary in force.
+
+    Deliberately separate from emissions_breakdown_pie(), which is shared with
+    the Miniplant 2.0 dashboard and cannot change shape. That function had two
+    defects this one exists to avoid:
+
+    1. It read `total_embodied_emissions_kg` — the liquefied-boundary column —
+       so on a week the headline fell back to the capture boundary it dropped
+       the embodied slice entirely, while the card directly above it reported
+       119.6 kg of embodied emissions.
+    2. It split auxiliary emissions across four named components by their share
+       of auxiliary energy, but those four do not cover every subsystem. The
+       unallocated remainder simply vanished, so the centre total read 883 kg
+       against 1,062.9 kg of operational emissions reported elsewhere on the
+       same page.
+
+    Both are avoided by construction here: operational emissions are allocated
+    across the Tier 2 buckets, which sum to the site meter exactly, and the
+    embodied figure comes from the resolved headline. The slices therefore add
+    up to the headline's total emissions, and the centre annotation is that
+    total rather than whatever happened to be plotted.
+
+    On the capture boundary the Liquefaction bucket is excluded rather than
+    rescaled — boundary A excludes liquefaction energy from both sides, so
+    those emissions are genuinely not in scope, not merely smaller.
+    """
+    on_capture = headline.get("basis") == "collected"
+
+    slices = []
+    for name, col, color in CN_ENERGY_SUBSYSTEMS:
+        if on_capture and col == "liquefaction_energy_kwh":
+            continue
+        kwh = row.get(col, 0) or 0
+        if kwh > 0:
+            slices.append((name, kwh * grid_ef, color))
+
+    embodied = headline.get("embodied") or 0
+    if embodied > 0:
+        slices.append(("Embodied", embodied, COLORS["embodied"]))
+
+    if not slices:
+        return None
+
+    labels, values, colors = zip(*slices)
+    total = headline.get("total_emissions")
+    if total is None:
+        total = sum(values)
+
+    week_label = row.get("week_label", "Selected Week")
+    fig = go.Figure(data=[go.Pie(
+        labels=list(labels),
+        values=list(values),
+        hole=0.45,
+        marker_colors=list(colors),
+        textinfo="percent",
+        textposition="inside",
+        textfont=dict(color="white", size=13, family="Inter, sans-serif"),
+        hovertemplate="<b>%{label}</b><br>%{value:,.1f} kg CO₂<br>%{percent}<extra></extra>",
+    )])
+    fig.update_traces(marker=dict(line=dict(color="#1E293B", width=2)))
+    apply_chart_layout(
+        fig,
+        title=f"🥧 Emissions Breakdown ({week_label})",
+        height=400,
+        showlegend=True,
+    )
+    fig.update_layout(
+        annotations=[dict(
+            text=f"<b>{total:,.0f}</b><br>kg CO₂",
+            x=0.5, y=0.5, font_size=14, showarrow=False,
+            font=dict(color=COLORS["text_light"], family="Inter, sans-serif"),
+        )],
+        legend=dict(orientation="h", yanchor="bottom", y=-0.15, xanchor="center", x=0.5),
+    )
+    return fig
+
+
 def cn_energy_breakdown_chart(df: pd.DataFrame) -> go.Figure:
     """Stacked bar of Carbon Nest energy by Tier 2 bucket, summing to the site meter."""
     if df.empty:

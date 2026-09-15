@@ -38,7 +38,7 @@ from reportlab.platypus import (
 )
 
 from app.components.branding import get_logo_path
-from app.components.charts import emissions_breakdown_pie, waterfall_chart
+from app.components.charts import cn_emissions_breakdown_pie, waterfall_chart
 from app.services.report_data import (
     BASIS_LABEL,
     WeekReportContext,
@@ -544,7 +544,7 @@ def generate_weekly_pdf_report(
     story.append(KeepTogether(subsystem_block))
     story.append(Spacer(1, 5 * mm))
 
-    pie = emissions_breakdown_pie(pd.DataFrame([row]))
+    pie = cn_emissions_breakdown_pie(row, ctx.headline_dict(), ctx.grid_ef)
     if pie:
         pie_block = []
         png = _fig_png(pie, width=900, height=420)

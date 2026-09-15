@@ -198,8 +198,12 @@ def boundaries_note(row: pd.Series) -> str:
     # below 100%, and prints a falsehood on the week it is not.
     direction = "lower" if liq_em < cap_em else "higher"
     outcome = "worse" if liq_net < cap_net else "better"
+    # "but" only when the two comparisons disagree about which boundary looks
+    # better — lower emissions alongside a worse removal is the contrast the
+    # sentence is drawing. When they agree, "but" would be a non-sequitur.
+    conjunction = "but" if (liq_em < cap_em) != (liq_net > cap_net) else "and"
     return (
-        f"The liquefied boundary carries <i>{direction}</i> total emissions and a "
+        f"The liquefied boundary carries <i>{direction}</i> total emissions {conjunction} a "
         f"<i>{outcome}</i> net removal — embodied emissions are charged per tonne of product, so "
         f"they shrink with the denominator. CO₂ vented during liquefaction reduces product "
         f"without being charged as an emission: it is atmospheric carbon returning to the "
