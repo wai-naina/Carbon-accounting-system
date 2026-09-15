@@ -109,7 +109,25 @@ def headline_figures(row: pd.Series) -> dict:
     collected = row.get("total_bag_co2_kg") or 0
     steam = row.get("total_steam_kg") or 0
 
-    if row.get("boundary") != "capture" and liquefied <= 0 and collected > 0:
+    # Two different routes to the capture boundary, and they must not be
+    # conflated. A SERIES-FILTERED row is on it structurally: liquefaction is a
+    # single shared downstream process with no per-series split, so
+    # load_weekly_df already swapped that row's headline columns to the capture
+    # figures. A FALLBACK row is on it circumstantially, because this
+    # particular week liquefied nothing.
+    #
+    # Both are the capture boundary and both must report basis "collected" —
+    # this previously returned "liquefied" for series-filtered rows, which was
+    # true of neither the columns nor the figures, and left every consumer
+    # keyed off `basis` believing liquefaction was in scope.
+    #
+    # Only the fallback carries the disclosure note. A per-series report is not
+    # announcing that the week failed to liquefy; it is reporting a boundary
+    # that never had a liquefied figure to begin with.
+    series_filtered = row.get("boundary") == "capture"
+    fell_back = not series_filtered and liquefied <= 0 and collected > 0
+
+    if series_filtered or fell_back:
         gross = collected
         # Boundary A energy: the site meter with liquefaction backed out of it,
         # exactly as the boundary table's row A reports it, so the card and the
@@ -117,7 +135,7 @@ def headline_figures(row: pd.Series) -> dict:
         energy = row.get("capture_energy_kwh") or 0
         return {
             "basis": "collected",
-            "note": HEADLINE_FALLBACK_NOTE,
+            "note": HEADLINE_FALLBACK_NOTE if fell_back else None,
             "gross_captured": gross,
             "total_emissions": row.get("capture_total_emissions_kg") or 0,
             "net_removal": row.get("capture_net_removal_kg") or 0,
