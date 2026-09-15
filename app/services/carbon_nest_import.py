@@ -91,8 +91,140 @@ def _validate_columns(df: pd.DataFrame, mapping: dict, label: str) -> List[str]:
     return []
 
 
-def _parse_dates(df: pd.DataFrame, column: str) -> pd.Series:
-    return pd.to_datetime(df[column], errors="coerce")
+# Datetime layouts the SCADA export has been seen to use, most specific first.
+# Each entry is (strptime format, human label). Both a US month-first and a
+# day-first layout are listed because the export has shipped both — see
+# infer_datetime_format() for how the ambiguity is resolved.
+_DATETIME_FORMATS: Tuple[Tuple[str, str], ...] = (
+    ("%Y-%m-%d %H:%M:%S", "ISO (YYYY-MM-DD)"),
+    ("%Y-%m-%d %H:%M", "ISO (YYYY-MM-DD)"),
+    ("%m/%d/%Y %H:%M:%S", "month-first (MM/DD/YYYY)"),
+    ("%m/%d/%Y %H:%M", "month-first (MM/DD/YYYY)"),
+    ("%d/%m/%Y %H:%M:%S", "day-first (DD/MM/YYYY)"),
+    ("%d/%m/%Y %H:%M", "day-first (DD/MM/YYYY)"),
+)
+
+
+def _blank_mask(raw: pd.Series) -> pd.Series:
+    """True where the source cell is genuinely empty (vs. unparseable)."""
+    return raw.isna() | (raw.astype(str).str.strip().isin(["", "nan", "NaT", "None"]))
+
+
+def _parse_with_format(raw: pd.Series, fmt: str) -> Optional[pd.Series]:
+    """Parse the whole column with `fmt`, or None if any non-blank cell fails.
+
+    Deliberately all-or-nothing. The old code called pd.to_datetime() with no
+    format and errors="coerce", which let pandas infer a layout from the FIRST
+    row and then silently coerce every row that disagreed with it into NaT —
+    the exact failure that put month-first dates into a day-first export.
+    """
+    parsed = pd.to_datetime(raw, format=fmt, errors="coerce")
+    failed = parsed.isna() & ~_blank_mask(raw)
+    if failed.any():
+        return None
+    return parsed
+
+
+def infer_datetime_format(
+    df: pd.DataFrame, columns: List[str], order_column: Optional[str] = None
+) -> Tuple[Optional[str], Optional[str], List[str]]:
+    """Work out which datetime layout this export actually uses.
+
+    Returns (format, human label, errors).
+
+    A layout is a candidate only if it parses EVERY non-blank cell in EVERY
+    datetime column. That alone disambiguates any file containing at least one
+    date whose day is >12 (e.g. "22/08/2026" cannot be month-first).
+
+    When a file is wholly ambiguous — every single date has day <=12, so both
+    layouts parse cleanly but disagree on what they mean — two tie-breakers
+    run in order:
+
+    1. `order_column` (cycle number). Carbon Nest cycle numbers are issued in
+       chronological order, so a layout whose timestamps run backwards against
+       them is wrong. This alone is often not enough: real dates 7, 8, 9 Sep
+       read month-first become 9 Jul, 9 Aug, 9 Sep, which still ascends.
+    2. Date span. Transposing day and month maps day-of-month onto
+       month-of-year, which can only stretch a file's range, never compress
+       it — so whichever layout yields the tighter span is the true one. This
+       holds in both directions, for genuinely day-first and genuinely
+       month-first exports alike.
+
+    Only a degenerate file (one row, or one distinct date) survives both. For
+    that, this returns an error rather than picking one, because a silent
+    wrong guess shifts cycles into the wrong weeks and corrupts every weekly
+    summary downstream.
+    """
+    candidates = []
+    for fmt, label in _DATETIME_FORMATS:
+        if all(_parse_with_format(df[col], fmt) is not None for col in columns):
+            candidates.append((fmt, label))
+
+    if not candidates:
+        samples = [str(v) for v in df[columns[0]].dropna().head(3).tolist()]
+        return None, None, [
+            "Could not parse the date column with any known layout "
+            f"(tried {', '.join(sorted({lbl for _, lbl in _DATETIME_FORMATS}))}). "
+            f"Sample values: {', '.join(samples) or '(none)'}"
+        ]
+
+    # Collapse candidates that produce identical timestamps — e.g. the
+    # with-seconds and without-seconds ISO variants are not a real ambiguity.
+    primary = columns[0]
+    distinct: List[Tuple[str, str, pd.Series]] = []
+    for fmt, label in candidates:
+        parsed = _parse_with_format(df[primary], fmt)
+        if not any(parsed.equals(seen) for _, _, seen in distinct):
+            distinct.append((fmt, label, parsed))
+
+    if len(distinct) == 1:
+        fmt, label, _ = distinct[0]
+        return fmt, label, []
+
+    remaining = distinct
+    if order_column and order_column in df.columns:
+        order = pd.to_numeric(df[order_column], errors="coerce")
+        monotonic = [c for c in remaining if _is_chronological(c[2], order)]
+        if len(monotonic) == 1:
+            return monotonic[0][0], monotonic[0][1], []
+        if monotonic:
+            remaining = monotonic
+
+    # Both readings still standing (e.g. real dates Sep 7,8,9 read month-first
+    # become Jul 9, Aug 9, Sep 9 — still ascending, so chronology alone cannot
+    # separate them). Span does: swapping day and month maps day-of-month onto
+    # month-of-year, which can only ever stretch a file's date range, never
+    # compress it. A weekly SCADA export spans days; the wrong reading spans
+    # months. So the tightest span is the true one.
+    spans = [(_date_span_days(parsed), fmt, label) for fmt, label, parsed in remaining]
+    spans.sort(key=lambda item: item[0])
+    if len(spans) > 1 and spans[0][0] < spans[1][0]:
+        return spans[0][1], spans[0][2], []
+
+    labels = sorted({label for _, label, _ in remaining})
+    return None, None, [
+        "This export's dates are ambiguous — they parse equally well as "
+        f"{' or '.join(labels)}, and the cycle ordering does not settle it. "
+        "Every date in the file has a day of 12 or lower. Re-export with an "
+        "unambiguous date format (ISO YYYY-MM-DD) rather than risk loading "
+        "cycles into the wrong weeks."
+    ]
+
+
+def _is_chronological(timestamps: pd.Series, order: pd.Series) -> bool:
+    """True if `timestamps` ascend when sorted by `order` (cycle number)."""
+    frame = pd.DataFrame({"ts": timestamps, "order": order}).dropna()
+    if len(frame) < 2:
+        return False
+    return frame.sort_values("order")["ts"].is_monotonic_increasing
+
+
+def _date_span_days(timestamps: pd.Series) -> float:
+    """Calendar days between the first and last timestamp, inf if unknowable."""
+    clean = timestamps.dropna()
+    if len(clean) < 2:
+        return float("inf")
+    return (clean.max() - clean.min()).total_seconds() / 86400.0
 
 
 def load_plant_cycles(file) -> Tuple[pd.DataFrame, List[str]]:
@@ -101,8 +233,16 @@ def load_plant_cycles(file) -> Tuple[pd.DataFrame, List[str]]:
     if errors:
         return df, errors
     df = df[list(CYCLE_COLUMNS.keys())].rename(columns=CYCLE_COLUMNS)
-    df["start_time"] = _parse_dates(df, "start_time")
-    df["end_time"] = _parse_dates(df, "end_time")
+
+    fmt, label, fmt_errors = infer_datetime_format(
+        df, ["start_time", "end_time"], order_column="cycle_number"
+    )
+    if fmt_errors:
+        return df, fmt_errors
+
+    df["start_time"] = _parse_with_format(df["start_time"], fmt)
+    df["end_time"] = _parse_with_format(df["end_time"], fmt)
+    df.attrs["datetime_format_label"] = label
     return df, []
 
 
@@ -121,6 +261,64 @@ def merge_plant_cycles_energy(cycles_df: pd.DataFrame, energy_df: pd.DataFrame) 
     return merged
 
 
+def validate_cycle_dates(df: pd.DataFrame) -> Tuple[List[str], List[str]]:
+    """Sanity-check parsed cycle timestamps before anything is written.
+
+    A last line of defence behind infer_datetime_format(). A day/month swap
+    that slips through shows up here as timestamps in the future or as a
+    cycle sequence that runs backwards in time, and both are cheap to spot
+    and impossible to explain away physically.
+    """
+    errors: List[str] = []
+    warnings: List[str] = []
+
+    if "start_time" not in df.columns:
+        return errors, warnings
+
+    starts = pd.to_datetime(df["start_time"], errors="coerce")
+
+    # Cycles cannot have run yet. A future timestamp is the loudest symptom of
+    # a day/month swap (12/09 read month-first lands in December).
+    horizon = pd.Timestamp.now() + pd.Timedelta(days=1)
+    future = df[starts > horizon]
+    if not future.empty:
+        numbers = ", ".join(str(int(n)) for n in future["cycle_number"].dropna().head(5))
+        errors.append(
+            f"{len(future)} cycle(s) have a start time in the future (e.g. cycle {numbers}). "
+            "This almost always means the export's dates were read with the day and "
+            "month transposed. Import aborted — re-export with ISO (YYYY-MM-DD) dates."
+        )
+
+    if "end_time" in df.columns:
+        ends = pd.to_datetime(df["end_time"], errors="coerce")
+        backwards = df[ends.notna() & starts.notna() & (ends < starts)]
+        if not backwards.empty:
+            numbers = ", ".join(str(int(n)) for n in backwards["cycle_number"].dropna().head(5))
+            errors.append(
+                f"{len(backwards)} cycle(s) end before they start (e.g. cycle {numbers}). "
+                "Import aborted."
+            )
+
+    # Cycle numbers are issued in chronological order, so their timestamps must
+    # ascend with them. A warning rather than an error: a legitimately odd
+    # export shouldn't be blocked, but it must not pass unremarked either.
+    if "cycle_number" in df.columns:
+        order = pd.to_numeric(df["cycle_number"], errors="coerce")
+        if len(starts.dropna()) >= 2 and not _is_chronological(starts, order):
+            warnings.append(
+                "Cycle start times do not increase with cycle number. Check the export's "
+                "date format before trusting the weekly totals built from it."
+            )
+
+    blank_starts = df[starts.isna()]
+    if not blank_starts.empty:
+        warnings.append(
+            f"{len(blank_starts)} row(s) have no usable start time and will be skipped."
+        )
+
+    return errors, warnings
+
+
 def import_cycles(session, merged_df: pd.DataFrame, import_batch_id: str) -> ImportReport:
     errors: List[str] = []
     warnings: List[str] = []
@@ -129,6 +327,11 @@ def import_cycles(session, merged_df: pd.DataFrame, import_batch_id: str) -> Imp
 
     if merged_df.empty:
         return ImportReport(0, 0, ["No data rows to import."], [], (None, None))
+
+    date_errors, date_warnings = validate_cycle_dates(merged_df)
+    warnings.extend(date_warnings)
+    if date_errors:
+        return ImportReport(0, 0, date_errors, warnings, (None, None))
 
     existing_numbers = {
         row.cycle_number for row in session.query(CarbonNestCycleData.cycle_number).all()

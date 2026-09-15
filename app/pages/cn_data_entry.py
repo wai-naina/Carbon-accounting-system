@@ -26,6 +26,7 @@ from app.services.carbon_nest_import import (
     load_cycle_energy,
     load_plant_cycles,
     merge_plant_cycles_energy,
+    validate_cycle_dates,
 )
 
 
@@ -113,6 +114,19 @@ def main() -> None:
             else:
                 st.success("✅ Files parsed successfully!")
 
+                # Name the date layout that was detected. The export has shipped
+                # both MM/DD and DD/MM, and a wrong reading silently shuffles
+                # cycles into other weeks, so this must never be invisible.
+                fmt_label = cycles_df.attrs.get("datetime_format_label")
+                if fmt_label:
+                    st.caption(f"🗓️ Date format detected: **{fmt_label}**")
+
+                date_errors, date_warnings = validate_cycle_dates(cycles_df)
+                for warn in date_warnings:
+                    st.warning(f"⚠️ {warn}")
+                for err in date_errors:
+                    st.error(f"🛑 {err}")
+
                 preview_col1, preview_col2 = st.columns(2)
                 with preview_col1:
                     st.markdown("**Plant Cycles Preview**")
@@ -146,7 +160,13 @@ def main() -> None:
                         if pd.notna(min_date) and pd.notna(max_date):
                             st.metric("Date Range", f"{min_date.strftime('%m/%d')} - {max_date.strftime('%m/%d')}")
 
-                if st.button("🚀 Import to Carbon Nest Database", type="primary", width="stretch"):
+                if st.button(
+                    "🚀 Import to Carbon Nest Database",
+                    type="primary",
+                    width="stretch",
+                    disabled=bool(date_errors),
+                    help="Resolve the date errors above before importing." if date_errors else None,
+                ):
                     merged = merge_plant_cycles_energy(cycles_df, energy_df)
                     session = get_session()
                     try:
@@ -154,15 +174,32 @@ def main() -> None:
                     finally:
                         session.close()
 
+                    for warn in report.warnings:
+                        st.warning(f"⚠️ {warn}")
                     if report.errors:
                         for err in report.errors:
                             st.error(err)
 
-                    st.success(f"✅ Imported **{report.added}** cycles, skipped {report.skipped} (already imported)")
-
-                    if report.date_range[0] and report.date_range[1]:
-                        st.info(f"📅 Date range: {report.date_range[0].date()} to {report.date_range[1].date()}")
-                        st.balloons()
+                    # Only celebrate if something actually landed. This used to
+                    # print the green banner unconditionally, so an import that
+                    # wrote nothing still read as a success.
+                    if report.added:
+                        st.success(
+                            f"✅ Imported **{report.added}** cycles, "
+                            f"skipped {report.skipped} (already imported)"
+                        )
+                        if report.date_range[0] and report.date_range[1]:
+                            st.info(
+                                f"📅 Date range: {report.date_range[0].date()} "
+                                f"to {report.date_range[1].date()}"
+                            )
+                            st.balloons()
+                    elif report.errors:
+                        st.error("🛑 Nothing was imported — fix the errors above and retry.")
+                    else:
+                        st.info(
+                            f"No new cycles — all {report.skipped} row(s) were already imported."
+                        )
 
     with tab2:
         st.markdown("### Step 2: Calculate Weekly Summary")
