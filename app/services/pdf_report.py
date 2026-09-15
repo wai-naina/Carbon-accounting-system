@@ -214,26 +214,94 @@ def _styles() -> dict:
     }
 
 
-def _kpi_card(label: str, value: str, sub: str, accent_hex: str, styles: dict) -> Table:
-    inner = Table(
-        [
-            [Paragraph(label.upper(), styles["card_label"])],
-            [Paragraph(value, styles["card_value"])],
-            [Paragraph(sub, styles["card_sub"])] if sub else [Paragraph("", styles["card_sub"])],
-        ],
-        colWidths=[38 * mm],
-    )
-    inner.setStyle(TableStyle([
-        ("TOPPADDING", (0, 0), (-1, -1), 2),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 1),
-        ("LEFTPADDING", (0, 0), (-1, -1), 8),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 8),
-        ("LINEABOVE", (0, 0), (-1, 0), 2.5, colors.HexColor(accent_hex)),
-        ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#F7F9F8")),
-        ("BOX", (0, 0), (-1, -1), 0.5, colors.HexColor(LINE)),
-        ("TOPPADDING", (0, 0), (-1, 0), 8),
+# Card geometry. The outer row table pads each cell by CARD_GUTTER on both
+# sides, so a card's own width is its column minus that — previously the inner
+# width was hardcoded to 38mm no matter how wide the column was, which left the
+# 80mm working-capacity and steam cards filling less than half their column and
+# forced values like "85.67 mol/m³" to wrap inside a box with room to spare.
+CARD_GUTTER = 3
+# Four cards across the 180mm text block, and the wide two-up variant used by
+# the working-capacity and steam sections. A two-card row of CARD_COL_W keeps
+# the narrow width and is left-aligned, so it shares a left edge and a card
+# width with the four-card rows above it.
+CARD_COL_W = 44 * mm
+WIDE_CARD_COL_W = 88 * mm
+CARD_PAD_X = 8
+CARD_PAD_TOP = 8
+CARD_PAD_Y = 2
+CARD_PAD_BOTTOM = 1
+
+
+def _kpi_card_row(
+    specs: list[tuple[str, str, str, str]],
+    styles: dict,
+    col_width: float,
+    h_align: str = "CENTER",
+) -> Table:
+    """One row of KPI cards, all the same height, with their labels, values and
+    subtitles on shared baselines.
+
+    Each card used to size its own three rows independently against its own
+    content. A label that wrapped where its neighbours' did not — "LIQUEFACTION
+    EFFICIENCY" is the one that does — pushed that card's value a line lower
+    than every other value in the row, and a subtitle that wrapped made that one
+    card taller than the rest. The row came out visibly ragged, and which card
+    was the odd one out changed with the week's numbers.
+
+    Heights are measured across every card in the row and applied uniformly, so
+    wrapping grows the whole row instead of breaking the alignment inside it.
+    `specs` is a list of (label, value, sub, accent_hex).
+    """
+    inner_w = col_width - 2 * CARD_GUTTER
+    text_w = inner_w - 2 * CARD_PAD_X
+
+    lines = [
+        (
+            Paragraph(label.upper(), styles["card_label"]),
+            Paragraph(value, styles["card_value"]),
+            Paragraph(sub or "", styles["card_sub"]),
+        )
+        for label, value, sub, _ in specs
+    ]
+    # Tallest label, tallest value and tallest subtitle anywhere in this row.
+    # Measured rather than assumed, so a value that legitimately needs two lines
+    # gets them instead of being clipped.
+    natural = [max(card[i].wrap(text_w, 0)[1] for card in lines) for i in range(3)]
+    row_heights = [
+        natural[0] + CARD_PAD_TOP + CARD_PAD_BOTTOM,
+        natural[1] + CARD_PAD_Y + CARD_PAD_BOTTOM,
+        natural[2] + CARD_PAD_Y + CARD_PAD_BOTTOM,
+    ]
+
+    cards = []
+    for (_, _, _, accent_hex), card in zip(specs, lines):
+        inner = Table(
+            [[card[0]], [card[1]], [card[2]]],
+            colWidths=[inner_w],
+            rowHeights=row_heights,
+        )
+        inner.setStyle(TableStyle([
+            ("TOPPADDING", (0, 0), (-1, -1), CARD_PAD_Y),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), CARD_PAD_BOTTOM),
+            ("LEFTPADDING", (0, 0), (-1, -1), CARD_PAD_X),
+            ("RIGHTPADDING", (0, 0), (-1, -1), CARD_PAD_X),
+            ("LINEABOVE", (0, 0), (-1, 0), 2.5, colors.HexColor(accent_hex)),
+            ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#F7F9F8")),
+            ("BOX", (0, 0), (-1, -1), 0.5, colors.HexColor(LINE)),
+            ("TOPPADDING", (0, 0), (-1, 0), CARD_PAD_TOP),
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ]))
+        cards.append(inner)
+
+    row = Table([cards], colWidths=[col_width] * len(cards), hAlign=h_align)
+    row.setStyle(TableStyle([
+        ("LEFTPADDING", (0, 0), (-1, -1), CARD_GUTTER),
+        ("RIGHTPADDING", (0, 0), (-1, -1), CARD_GUTTER),
+        ("TOPPADDING", (0, 0), (-1, -1), 0),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
     ]))
-    return inner
+    return row
 
 
 def _boundaries_table(row: pd.Series, styles: dict) -> Optional[Table]:
@@ -394,27 +462,23 @@ def generate_weekly_pdf_report(
     story.append(Spacer(1, 8 * mm))
 
     # --- KPI card row ---
-    cards = [
-        _kpi_card("Gross Captured", f"{gross_captured:,.1f} kg", boundary_note(row, ctx.headline_basis), "#0EA5E9", styles),
-        _kpi_card("Operational Emissions", f"{ctx.headline_operational:,.1f} kg", f"Grid EF: {grid_ef:.4f} kg/kWh", "#F59E0B", styles),
-        _kpi_card("Embodied Emissions", f"{ctx.headline_embodied:,.1f} kg", "Output-based, v0.6 LCA", "#A855F7", styles),
-        _kpi_card("Net Removal", f"{net_removal:+,.1f} kg", "Captured minus total emissions", GREEN if net_removal > 0 else RED, styles),
-    ]
-    card_row = Table([cards], colWidths=[40 * mm] * 4)
-    card_row.setStyle(TableStyle([("LEFTPADDING", (0, 0), (-1, -1), 3), ("RIGHTPADDING", (0, 0), (-1, -1), 3)]))
+    card_row = _kpi_card_row([
+        ("Gross Captured", f"{gross_captured:,.1f} kg", boundary_note(row, ctx.headline_basis), "#0EA5E9"),
+        ("Operational Emissions", f"{ctx.headline_operational:,.1f} kg", f"Grid EF: {grid_ef:.4f} kg/kWh", "#F59E0B"),
+        ("Embodied Emissions", f"{ctx.headline_embodied:,.1f} kg", "Output-based, v0.6 LCA", "#A855F7"),
+        ("Net Removal", f"{net_removal:+,.1f} kg", "Captured minus total emissions", GREEN if net_removal > 0 else RED),
+    ], styles, CARD_COL_W)
     story.append(card_row)
     story.append(Spacer(1, 3 * mm))
 
     # The chain in order, left to right, so the reader walks adsorbed → desorbed
     # → bagged → liquefied and lands on the overall figure last.
-    cards2 = [
-        _kpi_card("Desorption Efficiency", pct(ctx.desorption_efficiency), "Desorbed ÷ Adsorbed", "#A855F7", styles),
-        _kpi_card("Collection Efficiency", pct(ctx.collection_efficiency), "Collected ÷ Desorbed", "#3DB3B3", styles),
-        _kpi_card("Liquefaction Efficiency", pct(ctx.liquefaction_efficiency), "Liquefied ÷ Collected", "#0EA5E9", styles),
-        _kpi_card("Capture Efficiency", pct(ctx.capture_efficiency), "Liquefied ÷ Adsorbed · overall", BRAND_TEAL, styles),
-    ]
-    card_row2 = Table([cards2], colWidths=[40 * mm] * 4)
-    card_row2.setStyle(TableStyle([("LEFTPADDING", (0, 0), (-1, -1), 3), ("RIGHTPADDING", (0, 0), (-1, -1), 3), ("VALIGN", (0, 0), (-1, -1), "TOP")]))
+    card_row2 = _kpi_card_row([
+        ("Desorption Efficiency", pct(ctx.desorption_efficiency), "Desorbed ÷ Adsorbed", "#A855F7"),
+        ("Collection Efficiency", pct(ctx.collection_efficiency), "Collected ÷ Desorbed", "#3DB3B3"),
+        ("Liquefaction Efficiency", pct(ctx.liquefaction_efficiency), "Liquefied ÷ Collected", "#0EA5E9"),
+        ("Capture Efficiency", pct(ctx.capture_efficiency), "Liquefied ÷ Adsorbed · overall", BRAND_TEAL),
+    ], styles, CARD_COL_W)
     story.append(card_row2)
     story.append(Spacer(1, 3 * mm))
 
@@ -423,18 +487,17 @@ def generate_weekly_pdf_report(
     # liquefied basis and this card printed an em dash beside a boundary table
     # reporting 41.7 MWh/t for the same week.
     intensity = ctx.headline_energy_intensity
-    cards3 = [
-        _kpi_card("Cycles This Week", f"{int(row['total_cycles'] or 0)}", f"1n3: {s1n3['cycles']} · 2n4: {s2n4['cycles']}", BRAND_TEAL, styles),
-        _kpi_card(
+    # Left-aligned: a two-card row keeps the column width of the four-card rows
+    # above it, so all three rows share one left edge and one card width rather
+    # than stretching these two across the full page.
+    card_row3 = _kpi_card_row([
+        ("Cycles This Week", f"{int(row['total_cycles'] or 0)}", f"1n3: {s1n3['cycles']} · 2n4: {s2n4['cycles']}", BRAND_TEAL),
+        (
             "Energy Intensity",
             f"{intensity / 1000:.1f} MWh/t" if intensity is not None else "—",
-            f"Metered energy per tonne · {BASIS_LABEL[ctx.headline_basis]}", "#94A3B8", styles,
+            f"Metered energy per tonne · {BASIS_LABEL[ctx.headline_basis]}", "#94A3B8",
         ),
-    ]
-    card_row3 = Table([cards3], colWidths=[40 * mm] * 2, hAlign="LEFT")
-    # VALIGN TOP so the two cards' accent rules line up even when one card's
-    # value wraps to a second line and the other's doesn't.
-    card_row3.setStyle(TableStyle([("LEFTPADDING", (0, 0), (-1, -1), 3), ("RIGHTPADDING", (0, 0), (-1, -1), 3), ("VALIGN", (0, 0), (-1, -1), "TOP")]))
+    ], styles, CARD_COL_W, h_align="LEFT")
     story.append(card_row3)
     story.append(Spacer(1, 5 * mm))
 
@@ -462,16 +525,14 @@ def generate_weekly_pdf_report(
             "for hold time.", styles["chart_caption"],
         ),
     ]
-    wc_cards = []
+    wc_specs = []
     for g in ("A", "B"):
         gr = wc["groups"][g]
         cap = gr["avg_working_capacity_mol_per_m3"]
         value_str = f"{cap:.2f} mol/m³" if cap is not None else "—"
         sub = f"{gr['n_cycles_used']} of {gr['n_cycles_in_window']} cycles used"
-        wc_cards.append(_kpi_card(gr["label"], value_str, sub, "#3DB3B3" if g == "A" else "#A855F7", styles))
-    wc_row = Table([wc_cards], colWidths=[80 * mm] * 2)
-    wc_row.setStyle(TableStyle([("LEFTPADDING", (0, 0), (-1, -1), 3), ("RIGHTPADDING", (0, 0), (-1, -1), 3)]))
-    wc_block.append(wc_row)
+        wc_specs.append((gr["label"], value_str, sub, "#3DB3B3" if g == "A" else "#A855F7"))
+    wc_block.append(_kpi_card_row(wc_specs, styles, WIDE_CARD_COL_W))
     anomaly_cycles = ctx.anomaly_cycles
     if anomaly_cycles:
         cycle_word = "cycle" if len(anomaly_cycles) == 1 else "cycles"
@@ -497,20 +558,18 @@ def generate_weekly_pdf_report(
                 styles["chart_caption"],
             ),
         ]
-        steam_cards = [
-            _kpi_card(
+        steam_row = _kpi_card_row([
+            (
                 "Steam Used", f"{steam_kg:,.0f} kg",
                 f"1n3: {s1n3['steam_kg']:,.0f} kg · 2n4: {s2n4['steam_kg']:,.0f} kg",
-                "#0EA5E9", styles,
+                "#0EA5E9",
             ),
-            _kpi_card(
+            (
                 "Steam Intensity",
                 f"{steam_intensity:,.0f} kg/t" if steam_intensity is not None else "—",
-                f"kg steam per tonne · {BASIS_LABEL[ctx.headline_basis]}", "#F59E0B", styles,
+                f"kg steam per tonne · {BASIS_LABEL[ctx.headline_basis]}", "#F59E0B",
             ),
-        ]
-        steam_row = Table([steam_cards], colWidths=[80 * mm] * 2)
-        steam_row.setStyle(TableStyle([("LEFTPADDING", (0, 0), (-1, -1), 3), ("RIGHTPADDING", (0, 0), (-1, -1), 3)]))
+        ], styles, WIDE_CARD_COL_W)
         steam_block.append(steam_row)
         story.append(KeepTogether(steam_block))
         story.append(Spacer(1, 6 * mm))

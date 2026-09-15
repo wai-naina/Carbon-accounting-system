@@ -386,11 +386,20 @@ def generate_weekly_html_report(
   @media (max-width: 760px) {{
     .kpi-row, .kpi-row-2 {{ grid-template-columns: repeat(2, minmax(0,1fr)); }}
   }}
+  /* Grid stretch already gives every card in a row the same height, but the
+     three lines inside still sized themselves independently: a label that
+     wrapped where its neighbours' did not — "LIQUEFACTION EFFICIENCY" is the
+     one that does — dropped that card's value a line below the rest of the
+     row. Reserving two lines for every label puts all the values on one
+     baseline, and margin-top:auto pins the subtitles to a common bottom
+     regardless of how tall the card ends up. Mirrors _kpi_card_row() in the
+     PDF, so the two formats lay out the same. */
   .kpi {{ background: #F7F9F8; border: 1px solid {LINE}; border-top: 3px solid {MUTED};
-          padding: 10px 12px 12px; }}
-  .kpi-label {{ font-size: 10px; font-weight: 700; letter-spacing: .4px; color: {MUTED}; }}
-  .kpi-value {{ font-size: 24px; font-weight: 700; margin: 4px 0 2px; }}
-  .kpi-sub {{ font-size: 11px; color: {MUTED}; }}
+          padding: 10px 12px 12px; display: flex; flex-direction: column; }}
+  .kpi-label {{ font-size: 10px; font-weight: 700; letter-spacing: .4px; color: {MUTED};
+                line-height: 1.3; min-height: 2.6em; }}
+  .kpi-value {{ font-size: 24px; font-weight: 700; margin: 4px 0 2px; line-height: 1.2; }}
+  .kpi-sub {{ font-size: 11px; color: {MUTED}; line-height: 1.35; margin-top: auto; }}
   .table-scroll {{ overflow-x: auto; }}
   table.boundaries {{ border-collapse: collapse; width: 100%; min-width: 720px;
                       font-size: 13px; }}
@@ -438,7 +447,11 @@ def generate_weekly_html_report(
     {fallback_banner}
     <div class="kpi-row">{cards1}</div>
     <div class="kpi-row">{cards2}</div>
-    <div class="kpi-row kpi-row-2">{cards3}</div>
+    <!-- Four columns, two cards: the pair keeps the width and left edge of the
+         rows above instead of stretching across the page, matching the PDF.
+         kpi-row-2 stays for the genuinely two-up sections (working capacity,
+         steam), whose cards are meant to be full half-width. -->
+    <div class="kpi-row">{cards3}</div>
     {"".join(sections)}
   </main>
   <footer class="colophon">

@@ -279,7 +279,81 @@ def render_pdf_text(week_start, ctx, series_filter) -> str:
     import io
 
     pages = PdfReader(io.BytesIO(raw)).pages
-    return re.sub(r"[ \t]+", " ", "\n".join(p.extract_text() or "" for p in pages))
+    return re.sub(r"[ \t]+", " ", "\n".join(p.extract_text() or "" for p in pages)), raw
+
+
+CARD_VALUE_PT = 16  # font size of a KPI card's value, per pdf_report styles
+
+
+def card_baseline_problems(raw: bytes) -> list[str]:
+    """Every KPI card value in a row must sit on one baseline.
+
+    Cards used to size their three lines against their own content, so a label
+    that wrapped where its neighbours' did not dropped that card's value a line
+    below the rest of the row — and which card was the odd one out changed with
+    the week's numbers, so it could not be fixed by editing one label.
+
+    Positions are read from the rendered glyphs rather than the source, because
+    the source cannot tell you whether a string wrapped. The text matrix alone
+    is not enough: ReportLab emits cards inside form XObjects, so tm holds an
+    offset within the form and must be composed with cm to get the page
+    position.
+    """
+    import io
+
+    from pypdf import PdfReader
+
+    runs = []
+    for page_no, page in enumerate(PdfReader(io.BytesIO(raw)).pages, 1):
+        def visitor(text, cm, tm, font, size, _p=page_no):
+            if text.strip() and abs(size - CARD_VALUE_PT) < 0.6:
+                runs.append((_p, round(cm[5] + tm[5], 1), round(cm[4] + tm[4], 1), text.strip()))
+
+        page.extract_text(visitor_text=visitor)
+
+    runs.sort(key=lambda r: (r[0], -r[1], r[2]))
+    problems, band = [], []
+    for run in runs:
+        # A new band starts at a new page or a vertical gap wider than BAND_GAP.
+        # That threshold has to sit between the real row pitch (60pt) and the
+        # misalignment worth catching: the pre-fix report had a card sitting
+        # 8.5pt above its own row, so a tight threshold read it as a row of its
+        # own and passed it. Anything up to BAND_GAP now counts as "same row,
+        # wrong height" rather than "a different row".
+        if band and (band[-1][0] != run[0] or abs(band[-1][1] - run[1]) > BAND_GAP):
+            problems += _check_band(band)
+            band = []
+        band.append(run)
+    problems += _check_band(band)
+    return problems
+
+
+# Row pitch is 60pt; the defect this catches was 8.5pt.
+BAND_GAP = 30
+
+
+def _check_band(band: list) -> list[str]:
+    """Every card in this row must start its value at the same height.
+
+    Compared per column, taking each card's TOPMOST run: a value long enough to
+    wrap legitimately emits a second run a line lower, and that is the card
+    being tall, not the row being crooked.
+    """
+    top_per_column: dict[float, tuple] = {}
+    for run in band:
+        x = run[2]
+        if x not in top_per_column or run[1] > top_per_column[x][1]:
+            top_per_column[x] = run
+    if len(top_per_column) < 2:
+        return []
+    tops = sorted(top_per_column.values(), key=lambda r: r[2])
+    ys = [r[1] for r in tops]
+    if max(ys) - min(ys) < 0.6:
+        return []
+    return [
+        f"card values off baseline on page {tops[0][0]}: "
+        + ", ".join(f"{r[3]!r}@y{r[1]}" for r in tops)
+    ]
 
 
 def main() -> int:
@@ -328,7 +402,8 @@ def main() -> int:
 
         if with_pdf:
             try:
-                pdf_text = render_pdf_text(week_start, ctx, series_filter)
+                pdf_text, pdf_raw = render_pdf_text(week_start, ctx, series_filter)
+                problems += card_baseline_problems(pdf_raw)
             except Exception:
                 problems.append(
                     "PDF render failed: " + traceback.format_exc().strip().splitlines()[-1]
