@@ -23,6 +23,7 @@ import pandas as pd
 from sqlalchemy import create_engine, inspect, text
 from app.database.models import Base
 from app.config import load_config
+from app.database.connection import normalize_postgres_url
 
 # Chunk size for bulk inserts (avoids psycopg2 parameter limit with large tables)
 CHUNK_SIZE = 100
@@ -70,8 +71,7 @@ def main():
         print("Example: set DATABASE_URL=postgresql://user:pass@host/neondb?sslmode=require")
         sys.exit(1)
 
-    if pg_url.startswith("postgres://"):
-        pg_url = pg_url.replace("postgres://", "postgresql://", 1)
+    pg_url = normalize_postgres_url(pg_url)
 
     pg_engine = create_engine(pg_url)
 

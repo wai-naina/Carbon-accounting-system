@@ -13,12 +13,21 @@ from app.database.models import Base, CarbonNestSorbentConfig, SystemConfig, Use
 from app.auth.security import hash_password
 
 
+def normalize_postgres_url(database_url: str) -> str:
+    # Pin the driver to psycopg2 (what requirements.txt installs). A bare
+    # postgresql:// URL lets SQLAlchemy pick its default DBAPI, and newer
+    # SQLAlchemy releases default to psycopg 3, which isn't installed.
+    for prefix in ("postgres://", "postgresql://"):
+        if database_url.startswith(prefix):
+            return "postgresql+psycopg2://" + database_url[len(prefix):]
+    return database_url
+
+
 def get_engine():
     database_url = os.getenv("DATABASE_URL")
     if database_url:
         # PostgreSQL (e.g. Neon) - ensure postgresql:// scheme for SQLAlchemy
-        if database_url.startswith("postgres://"):
-            database_url = database_url.replace("postgres://", "postgresql://", 1)
+        database_url = normalize_postgres_url(database_url)
         return create_engine(
             database_url,
             future=True,
