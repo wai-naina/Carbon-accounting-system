@@ -241,6 +241,10 @@ def create_or_update_weekly_summary(
     fan_n3_m2_kwh: float = 0.0,
     fan_n3_m3_kwh: float = 0.0,
     fan_n3_m4_kwh: float = 0.0,
+    fan_n4_m1_kwh: float = 0.0,
+    fan_n4_m2_kwh: float = 0.0,
+    fan_n4_m3_kwh: float = 0.0,
+    fan_n4_m4_kwh: float = 0.0,
     water_pumps_kwh: float = 0.0,
     compressor_a_kwh: float = 0.0,
     compressor_b_kwh: float = 0.0,
@@ -321,6 +325,8 @@ def create_or_update_weekly_summary(
         safe_value(fan_n2_m3_kwh), safe_value(fan_n2_m4_kwh),
         safe_value(fan_n3_m1_kwh), safe_value(fan_n3_m2_kwh),
         safe_value(fan_n3_m3_kwh), safe_value(fan_n3_m4_kwh),
+        safe_value(fan_n4_m1_kwh), safe_value(fan_n4_m2_kwh),
+        safe_value(fan_n4_m3_kwh), safe_value(fan_n4_m4_kwh),
     ]
     fans_metered = sum(fan_readings)
     fans_total_kwh = fans_metered if fans_metered > 0 else energy["fans_kwh"]
@@ -429,6 +435,10 @@ def create_or_update_weekly_summary(
     summary.fan_n3_m2_kwh = fan_readings[7]
     summary.fan_n3_m3_kwh = fan_readings[8]
     summary.fan_n3_m4_kwh = fan_readings[9]
+    summary.fan_n4_m1_kwh = fan_readings[10]
+    summary.fan_n4_m2_kwh = fan_readings[11]
+    summary.fan_n4_m3_kwh = fan_readings[12]
+    summary.fan_n4_m4_kwh = fan_readings[13]
     summary.fan_standby_kwh = fan_standby_kwh
     summary.water_pumps_kwh = water_pumps_kwh
     summary.compressor_a_kwh = compressor_a_kwh

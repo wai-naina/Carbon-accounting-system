@@ -315,6 +315,7 @@ class CarbonNestWeeklySummary(Base):
     # module separately. Its fans MUST be summed into fans_total_kwh: that total
     # is reconciled against the CSV's in-cycle fan energy, which already
     # includes N3's cycles, so omitting them drives fan_standby_kwh negative.
+    # N4 followed in October 2026, metered per module the same way.
     fan_n1_m1n2_kwh = Column(Float)
     fan_n1_m3n4_kwh = Column(Float)
     fan_n2_m1_kwh = Column(Float)
@@ -325,6 +326,10 @@ class CarbonNestWeeklySummary(Base):
     fan_n3_m2_kwh = Column(Float)
     fan_n3_m3_kwh = Column(Float)
     fan_n3_m4_kwh = Column(Float)
+    fan_n4_m1_kwh = Column(Float)
+    fan_n4_m2_kwh = Column(Float)
+    fan_n4_m3_kwh = Column(Float)
+    fan_n4_m4_kwh = Column(Float)
     # Derived: fans_total_kwh - fans_kwh (the CSV's in-cycle sum). Fan draw
     # between cycles; the PDF gives no process/standby split for fans.
     fan_standby_kwh = Column(Float)

@@ -318,6 +318,10 @@ def main() -> None:
                 "fan_n3_m2": "fan_n3_m2_kwh",
                 "fan_n3_m3": "fan_n3_m3_kwh",
                 "fan_n3_m4": "fan_n3_m4_kwh",
+                "fan_n4_m1": "fan_n4_m1_kwh",
+                "fan_n4_m2": "fan_n4_m2_kwh",
+                "fan_n4_m3": "fan_n4_m3_kwh",
+                "fan_n4_m4": "fan_n4_m4_kwh",
                 "water_pumps": "water_pumps_kwh",
                 "compressor_a": "compressor_a_kwh",
                 "compressor_b": "compressor_b_kwh",
@@ -413,6 +417,18 @@ def main() -> None:
         with n3_col4:
             fan_n3_m4 = pdf_input("N3 M4 Fan (kWh)", "fan_n3_m4", "COMPONENT CONSUMPTIONS → N3 M4 Fan")
 
+        # N4 meters each module separately too. Zero for any week before it
+        # was commissioned (October 2026).
+        n4_col1, n4_col2, n4_col3, n4_col4 = st.columns(4)
+        with n4_col1:
+            fan_n4_m1 = pdf_input("N4 M1 Fan (kWh)", "fan_n4_m1", "COMPONENT CONSUMPTIONS → N4 M1 Fan")
+        with n4_col2:
+            fan_n4_m2 = pdf_input("N4 M2 Fan (kWh)", "fan_n4_m2", "COMPONENT CONSUMPTIONS → N4 M2 Fan")
+        with n4_col3:
+            fan_n4_m3 = pdf_input("N4 M3 Fan (kWh)", "fan_n4_m3", "COMPONENT CONSUMPTIONS → N4 M3 Fan")
+        with n4_col4:
+            fan_n4_m4 = pdf_input("N4 M4 Fan (kWh)", "fan_n4_m4", "COMPONENT CONSUMPTIONS → N4 M4 Fan")
+
         st.markdown("#### Tier 3 — Skid components")
         util_col1, util_col2, util_col3 = st.columns(3)
         with util_col1:
@@ -450,6 +466,7 @@ def main() -> None:
             fan_n1_m1n2 + fan_n1_m3n4
             + fan_n2_m1 + fan_n2_m2 + fan_n2_m3 + fan_n2_m4
             + fan_n3_m1 + fan_n3_m2 + fan_n3_m3 + fan_n3_m4
+            + fan_n4_m1 + fan_n4_m2 + fan_n4_m3 + fan_n4_m4
         )
         fans_total_eff = fans_total or csv_fans
         fan_standby = fans_total_eff - csv_fans
@@ -598,6 +615,10 @@ def main() -> None:
                     fan_n3_m2_kwh=fan_n3_m2,
                     fan_n3_m3_kwh=fan_n3_m3,
                     fan_n3_m4_kwh=fan_n3_m4,
+                    fan_n4_m1_kwh=fan_n4_m1,
+                    fan_n4_m2_kwh=fan_n4_m2,
+                    fan_n4_m3_kwh=fan_n4_m3,
+                    fan_n4_m4_kwh=fan_n4_m4,
                     water_pumps_kwh=water_pumps,
                     compressor_a_kwh=compressor_a,
                     compressor_b_kwh=compressor_b,
