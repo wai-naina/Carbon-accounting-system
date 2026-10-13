@@ -65,6 +65,8 @@ def _wc_group(label, cap, used, in_window):
         "excluded_cycle_ids": [],
         "missing_config_cycle_ids": [],
         "missing_config_prefixes": [],
+        "scada_volume_cycle_ids": [],
+        "scada_volume_prefixes": [],
         "config_anomalies": [],
     }
 

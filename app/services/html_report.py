@@ -273,6 +273,19 @@ def generate_weekly_html_report(
             f"<p class='caption'>Note: {cycle_word} {cycle_list} {verb} an unusual implied "
             "bed volume — check sorbent config</p>"
         )
+    wc_groups = ctx.working_capacity["groups"].values()
+    scada_prefixes = sorted({p for g in wc_groups for p in g.get("scada_volume_prefixes", [])})
+    missing_prefixes = sorted({p for g in wc_groups for p in g.get("missing_config_prefixes", [])})
+    if scada_prefixes:
+        wc_section.append(
+            f"<p class='caption'>Note: {', '.join(scada_prefixes)} cycles use SCADA's exported "
+            "DES Vol Cap (no sorbent config set for those modules).</p>"
+        )
+    if missing_prefixes:
+        wc_section.append(
+            f"<p class='caption'>Note: {', '.join(missing_prefixes)} cycles excluded — no sorbent "
+            "config and no SCADA DES Vol Cap.</p>"
+        )
     sections.append("".join(wc_section))
 
     # --- Desorption steam ---

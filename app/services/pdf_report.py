@@ -533,6 +533,20 @@ def generate_weekly_pdf_report(
         sub = f"{gr['n_cycles_used']} of {gr['n_cycles_in_window']} cycles used"
         wc_specs.append((gr["label"], value_str, sub, "#3DB3B3" if g == "A" else "#A855F7"))
     wc_block.append(_kpi_card_row(wc_specs, styles, WIDE_CARD_COL_W))
+    scada_prefixes = sorted({p for g in ("A", "B") for p in wc["groups"][g].get("scada_volume_prefixes", [])})
+    missing_prefixes = sorted({p for g in ("A", "B") for p in wc["groups"][g].get("missing_config_prefixes", [])})
+    if scada_prefixes:
+        wc_block.append(Paragraph(
+            f"Note: {', '.join(scada_prefixes)} cycles use SCADA's exported DES Vol Cap "
+            "(no sorbent config set for those modules).",
+            styles["chart_caption"],
+        ))
+    if missing_prefixes:
+        wc_block.append(Paragraph(
+            f"Note: {', '.join(missing_prefixes)} cycles excluded — no sorbent config and no "
+            "SCADA DES Vol Cap.",
+            styles["chart_caption"],
+        ))
     anomaly_cycles = ctx.anomaly_cycles
     if anomaly_cycles:
         cycle_word = "cycle" if len(anomaly_cycles) == 1 else "cycles"

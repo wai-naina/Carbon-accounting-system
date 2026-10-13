@@ -168,6 +168,17 @@ def weekly_working_capacity(session, reference: datetime) -> dict:
         # count still reading healthy. n_cycles_used now means "actually
         # contributed", which is what all four call sites already claim it is.
         caps_by_cycle = [(c, des_vol_cap(session, c)) for c in valid]
+        # A module with no sorbent-config row (N3 and N4 were commissioned
+        # without one) falls back to SCADA's own exported DES Vol Cap. That is
+        # the same formula with SCADA's bed volume as the denominator, so the
+        # figure matches SCADA's report for that module. Config still wins
+        # whenever a row exists; only cycles with neither are reported missing.
+        scada_fallback = [
+            c for c, v in caps_by_cycle if v is None and c.des_vol_cap is not None
+        ]
+        caps_by_cycle = [
+            (c, c.des_vol_cap if c in scada_fallback else v) for c, v in caps_by_cycle
+        ]
         caps = [v for _, v in caps_by_cycle if v is not None]
         unconfigured = [c for c, v in caps_by_cycle if v is None]
         anomalies = [a for c in in_window if (a := detect_config_anomaly(session, c))]
@@ -181,6 +192,10 @@ def weekly_working_capacity(session, reference: datetime) -> dict:
             "missing_config_cycle_ids": [c.cycle_number for c in unconfigured],
             "missing_config_prefixes": sorted(
                 {module_prefix_of(c.raw_module) for c in unconfigured}
+            ),
+            "scada_volume_cycle_ids": [c.cycle_number for c in scada_fallback],
+            "scada_volume_prefixes": sorted(
+                {module_prefix_of(c.raw_module) for c in scada_fallback}
             ),
             "config_anomalies": anomalies,
         }
