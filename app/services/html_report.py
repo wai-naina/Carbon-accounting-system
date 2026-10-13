@@ -261,7 +261,7 @@ def generate_weekly_html_report(
     wc_section = [
         "<h2>Sorbent Working Capacity</h2>",
         "<p class='caption'>Desorption-based capacity — mol CO&#8322; released per m&#179; of "
-        "sorbent bed, averaged across this week's valid cycles. Not adsorption uptake, not "
+        "sorbent bed (SCADA's per-cycle DES Vol Cap), averaged across this week's valid cycles. Not adsorption uptake, not "
         "normalised for hold time.</p>",
         f"<div class='kpi-row kpi-row-2'>{''.join(wc_cards)}</div>",
     ]
@@ -274,17 +274,17 @@ def generate_weekly_html_report(
             "bed volume — check sorbent config</p>"
         )
     wc_groups = ctx.working_capacity["groups"].values()
-    scada_prefixes = sorted({p for g in wc_groups for p in g.get("scada_volume_prefixes", [])})
+    config_prefixes = sorted({p for g in wc_groups for p in g.get("config_volume_prefixes", [])})
     missing_prefixes = sorted({p for g in wc_groups for p in g.get("missing_config_prefixes", [])})
-    if scada_prefixes:
+    if config_prefixes:
         wc_section.append(
-            f"<p class='caption'>Note: {', '.join(scada_prefixes)} cycles use SCADA's exported "
-            "DES Vol Cap (no sorbent config set for those modules).</p>"
+            f"<p class='caption'>Note: {', '.join(config_prefixes)} cycles had no DES Vol Cap "
+            "in the export and were computed from sorbent config.</p>"
         )
     if missing_prefixes:
         wc_section.append(
-            f"<p class='caption'>Note: {', '.join(missing_prefixes)} cycles excluded — no sorbent "
-            "config and no SCADA DES Vol Cap.</p>"
+            f"<p class='caption'>Note: {', '.join(missing_prefixes)} cycles excluded — no DES Vol Cap "
+            "in the export and no sorbent config.</p>"
         )
     sections.append("".join(wc_section))
 

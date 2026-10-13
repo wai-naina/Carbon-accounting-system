@@ -3,7 +3,10 @@ published report metric, computed from the raw cycle log rather than by hand.
 
 Working capacity here is **desorption-based**: moles of CO2 released during the
 desorption half-cycle, divided by the sorbent bed volume that took part in that
-cycle, averaged unweighted across the valid cycles in the week. It is *not*
+cycle, averaged unweighted across the valid cycles in the week. Since 2026-10-13
+the per-cycle value is SCADA's exported DES Vol Cap, so it comes from the data
+rather than this app's sorbent-config bed volumes; config is only a fallback for
+rows exported without it. It is *not*
 adsorption uptake (runs ~20-40% higher) and *not* normalised for desorption
 duration — both deliberate, since this reproduces an existing reported figure
 rather than proposing a new one (see the brief's "Phase 2" for what's wanted on
@@ -159,28 +162,20 @@ def weekly_working_capacity(session, reference: datetime) -> dict:
         in_window = [c for c in cycles if group_of(c.series) == g]
         valid = [c for c in in_window if is_valid_for_capacity(c)]
         excluded_ids = [c.cycle_number for c in in_window if c not in valid]
-        # Capacity is kept next to its cycle so a cycle whose module has no
-        # sorbent-config row can be *reported* rather than silently dropped.
-        # It yields None (no bed volume, no denominator) and cannot be
-        # averaged — but it used to vanish without trace: n_cycles_used still
-        # counted it and excluded_cycle_ids never mentioned it, so a newly
-        # commissioned Nelion moved the group average with every displayed
-        # count still reading healthy. n_cycles_used now means "actually
-        # contributed", which is what all four call sites already claim it is.
-        caps_by_cycle = [(c, des_vol_cap(session, c)) for c in valid]
-        # A module with no sorbent-config row (N3 and N4 were commissioned
-        # without one) falls back to SCADA's own exported DES Vol Cap. That is
-        # the same formula with SCADA's bed volume as the denominator, so the
-        # figure matches SCADA's report for that module. Config still wins
-        # whenever a row exists; only cycles with neither are reported missing.
-        scada_fallback = [
-            c for c, v in caps_by_cycle if v is None and c.des_vol_cap is not None
-        ]
+        # Working capacity comes from the data: SCADA's exported DES Vol Cap
+        # for the cycle (DES CO2 / 0.04401 / SCADA's bed volume), the same
+        # figure SCADA's weekly report averages. The sorbent-config bed volume
+        # is only a fallback for a row exported without DES Vol Cap, and a
+        # cycle with neither is reported as missing rather than silently
+        # dropped, so n_cycles_used always means "actually contributed".
+        from_config = [c for c in valid if c.des_vol_cap is None]
         caps_by_cycle = [
-            (c, c.des_vol_cap if c in scada_fallback else v) for c, v in caps_by_cycle
+            (c, des_vol_cap(session, c) if c in from_config else c.des_vol_cap)
+            for c in valid
         ]
         caps = [v for _, v in caps_by_cycle if v is not None]
         unconfigured = [c for c, v in caps_by_cycle if v is None]
+        config_used = [c for c in from_config if c not in unconfigured]
         anomalies = [a for c in in_window if (a := detect_config_anomaly(session, c))]
         groups[g] = {
             "label": GROUP_LABELS[g],
@@ -193,9 +188,9 @@ def weekly_working_capacity(session, reference: datetime) -> dict:
             "missing_config_prefixes": sorted(
                 {module_prefix_of(c.raw_module) for c in unconfigured}
             ),
-            "scada_volume_cycle_ids": [c.cycle_number for c in scada_fallback],
-            "scada_volume_prefixes": sorted(
-                {module_prefix_of(c.raw_module) for c in scada_fallback}
+            "config_volume_cycle_ids": [c.cycle_number for c in config_used],
+            "config_volume_prefixes": sorted(
+                {module_prefix_of(c.raw_module) for c in config_used}
             ),
             "config_anomalies": anomalies,
         }

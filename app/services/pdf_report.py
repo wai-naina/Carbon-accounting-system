@@ -520,8 +520,8 @@ def generate_weekly_pdf_report(
     wc_block = [
         Paragraph("Sorbent Working Capacity", styles["h2"]),
         Paragraph(
-            "Desorption-based capacity — mol CO&#8322; released per m&#179; of sorbent bed, "
-            "averaged across this week's valid cycles. Not adsorption uptake, not normalised "
+            "Desorption-based capacity — mol CO&#8322; released per m&#179; of sorbent bed "
+            "(SCADA's per-cycle DES Vol Cap), averaged across this week's valid cycles. Not adsorption uptake, not normalised "
             "for hold time.", styles["chart_caption"],
         ),
     ]
@@ -533,18 +533,18 @@ def generate_weekly_pdf_report(
         sub = f"{gr['n_cycles_used']} of {gr['n_cycles_in_window']} cycles used"
         wc_specs.append((gr["label"], value_str, sub, "#3DB3B3" if g == "A" else "#A855F7"))
     wc_block.append(_kpi_card_row(wc_specs, styles, WIDE_CARD_COL_W))
-    scada_prefixes = sorted({p for g in ("A", "B") for p in wc["groups"][g].get("scada_volume_prefixes", [])})
+    config_prefixes = sorted({p for g in ("A", "B") for p in wc["groups"][g].get("config_volume_prefixes", [])})
     missing_prefixes = sorted({p for g in ("A", "B") for p in wc["groups"][g].get("missing_config_prefixes", [])})
-    if scada_prefixes:
+    if config_prefixes:
         wc_block.append(Paragraph(
-            f"Note: {', '.join(scada_prefixes)} cycles use SCADA's exported DES Vol Cap "
-            "(no sorbent config set for those modules).",
+            f"Note: {', '.join(config_prefixes)} cycles had no DES Vol Cap in the export "
+            "and were computed from sorbent config.",
             styles["chart_caption"],
         ))
     if missing_prefixes:
         wc_block.append(Paragraph(
-            f"Note: {', '.join(missing_prefixes)} cycles excluded — no sorbent config and no "
-            "SCADA DES Vol Cap.",
+            f"Note: {', '.join(missing_prefixes)} cycles excluded — no DES Vol Cap in the "
+            "export and no sorbent config.",
             styles["chart_caption"],
         ))
     anomaly_cycles = ctx.anomaly_cycles

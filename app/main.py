@@ -637,17 +637,16 @@ def render_carbon_nest_home() -> None:
                     ),
                     unsafe_allow_html=True,
                 )
-                if group.get("scada_volume_prefixes"):
+                if group.get("config_volume_prefixes"):
                     st.caption(
-                        f"ℹ️ {len(group['scada_volume_cycle_ids'])} cycle(s) use SCADA's own DES Vol Cap "
-                        f"({', '.join(group['scada_volume_prefixes'])} have no sorbent config)."
+                        f"ℹ️ {len(group['config_volume_cycle_ids'])} cycle(s) had no DES Vol Cap in the "
+                        f"export ({', '.join(group['config_volume_prefixes'])}); computed from sorbent config."
                     )
                 if group["missing_config_prefixes"]:
                     missing = ", ".join(group["missing_config_prefixes"])
                     st.caption(
                         f"⚠️ {len(group['missing_config_cycle_ids'])} cycle(s) excluded — "
-                        f"no sorbent config for {missing}. Add it in Admin → Sorbent Config "
-                        "so they count toward this average."
+                        f"no DES Vol Cap in the export and no sorbent config for {missing}."
                     )
                 if group["config_anomalies"]:
                     bad_cycles = ", ".join(str(a["cycle_number"]) for a in group["config_anomalies"])
