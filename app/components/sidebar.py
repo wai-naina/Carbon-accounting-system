@@ -142,6 +142,9 @@ def render_series_filter() -> str:
 # factors and PPA offers are actually published at, and 0.0579 vs 0.024 is
 # harder to read at a glance than 57.9 vs 24.
 ENERGY_SCENARIO_PRESETS = {
+    # The Kenya grid factor Carbon Nest reported at before switching to the
+    # REC-backed 4.6 g/kWh, kept so the unmitigated-grid view is one click away.
+    "grid_57_9": 0.0579,
     "clean_24": 0.024,
     "zero": 0.0,
 }
@@ -169,6 +172,7 @@ def render_energy_scenario(configured_ef: float) -> Tuple[float, str, bool]:
 
     scenario_labels = {
         "configured": f"As configured — {configured_ef * 1000:,.1f} g/kWh",
+        "grid_57_9": "Kenya grid (no RECs) — 57.9 g/kWh",
         "clean_24": "Cleaner supply — 24 g/kWh",
         "zero": "Zero-carbon supply — 0 g/kWh",
         "custom": "Custom…",

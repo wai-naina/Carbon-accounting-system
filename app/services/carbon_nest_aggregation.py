@@ -171,8 +171,11 @@ def get_grid_ef(session) -> float:
     """Carbon Nest's own grid emission factor (kg CO2/kWh) — deliberately
     separate from Miniplant 2.0's grid_emission_factor config key, since
     Miniplant is a frozen historical archive and shouldn't shift when this
-    is updated (0.0579 as of 2026-07-29, up from the prior 0.055 figure)."""
-    return _get_config_value(session, "carbon_nest_grid_emission_factor", 0.0579)
+    is updated. 0.0046 (4.6 g/kWh) since 2026-10-13: reporting uses the
+    REC-backed supply factor while RECs are being procured. The Kenya grid
+    factor it replaced was 0.0579 (2026-07-29, up from 0.055) and stays
+    available as a what-if preset in the sidebar."""
+    return _get_config_value(session, "carbon_nest_grid_emission_factor", 0.0046)
 
 
 @st.cache_data(ttl=60)

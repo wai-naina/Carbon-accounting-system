@@ -143,7 +143,7 @@ def _seed_system_config() -> None:
             "Kenya grid EF (kg CO2/kWh) - Miniplant 2.0",
         ),
         "carbon_nest_grid_emission_factor": (
-            str(config.get("emission_factors", "grid", "carbon_nest_kenya_power", default=0.0579)),
+            str(config.get("emission_factors", "grid", "carbon_nest_kenya_power", default=0.0046)),
             "float",
             "Kenya grid EF (kg CO2/kWh) - Carbon Nest",
         ),

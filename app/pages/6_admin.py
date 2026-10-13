@@ -314,7 +314,7 @@ def main() -> None:
             with ef_col2:
                 st.markdown("#### 🌿 Carbon Nest")
                 cn_config = _get_ef_config("carbon_nest_grid_emission_factor")
-                cn_current = float(cn_config.value) if cn_config else 0.0579
+                cn_current = float(cn_config.value) if cn_config else 0.0046
                 st.caption(f"Current: **{cn_current} kg CO₂/kWh**")
                 cn_new = st.number_input(
                     "Carbon Nest grid EF (kg CO₂/kWh)", min_value=0.0, value=cn_current, step=0.001,
